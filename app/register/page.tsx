@@ -3,6 +3,9 @@
 import type React from "react"
 
 import { Button } from "@/components/ui/button"
+
+// Désactiver le pré-rendering pour cette page (utilise React Query)
+export const dynamic = 'force-dynamic'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -17,6 +20,8 @@ import { SecurityModal } from "@/components/security/security-modal"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Progress } from "@/components/ui/progress"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { useAuth } from "@/hooks/use-auth"
+import { useQueryClient } from "@tanstack/react-query"
 
 type PasswordStrength = "weak" | "medium" | "strong" | "very-strong"
 
@@ -34,6 +39,7 @@ interface PasswordValidation {
 
 export default function RegisterPage() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -139,17 +145,18 @@ export default function RegisterPage() {
     setIsLoading(true)
 
     try {
-      // Appel à l'API d'inscription
+      // Appel à l'API réelle de register
       const response = await fetch("/api/auth/register", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           email: formData.email,
           password: formData.password,
-          name: `${formData.firstName} ${formData.lastName}`,
           firstName: formData.firstName,
           lastName: formData.lastName,
-          organization: formData.cabinet,
+          cabinet: formData.cabinet,
           role: formData.role,
         }),
       })
@@ -158,32 +165,46 @@ export default function RegisterPage() {
 
       if (!response.ok) {
         if (response.status === 409) {
-          setErrors({ ...errors, email: "Cet email est déjà associé à un compte" })
+          // Email déjà utilisé
           toast.error("Email déjà utilisé", {
-            description: "Un compte existe déjà avec cette adresse email.",
+            description: "Un compte existe déjà avec cette adresse email. Essayez de vous connecter.",
             duration: 5000,
           })
+          setErrors({ ...errors, email: data.error || "Cet email est déjà associé à un compte" })
         } else {
-          toast.error("Erreur d'inscription", {
-            description: data.error || "Une erreur est survenue.",
+          toast.error("Erreur lors de l'inscription", {
+            description: data.error || "Une erreur est survenue. Veuillez réessayer.",
+            duration: 5000,
           })
         }
+        setIsLoading(false)
         return
       }
 
-      // Succès - afficher le modal
-      setShowSuccessModal(true)
+      // Succès - L'API a créé le cookie automatiquement, on met juste à jour le cache React Query
+      if (data.success && data.user) {
+        // Mettre à jour le cache React Query avec les données utilisateur
+        queryClient.setQueryData(["user"], data.user)
 
-      toast.info("Email de confirmation envoyé", {
-        description: "Un email de vérification a été envoyé à votre adresse.",
-        duration: 6000,
-      })
+        // Show modal
+        setShowSuccessModal(true)
+
+        // Send confirmation email notification
+        setTimeout(() => {
+          toast.info("Compte créé avec succès", {
+            description: "Bienvenue sur Companion! Votre compte a été créé.",
+            duration: 6000,
+          })
+        }, 1000)
+      }
+
+      setIsLoading(false)
     } catch (error) {
-      console.error("Registration error:", error)
+      console.error("Erreur lors de l'inscription:", error)
       toast.error("Erreur réseau", {
-        description: "Impossible de créer le compte. Vérifiez votre connexion.",
+        description: "Impossible de se connecter au serveur. Vérifiez votre connexion internet.",
+        duration: 5000,
       })
-    } finally {
       setIsLoading(false)
     }
   }
@@ -196,7 +217,7 @@ export default function RegisterPage() {
 
     setTimeout(() => {
       router.push("/onboarding")
-    }, 1500)
+    }, 300) // Réduit de 1500ms à 300ms pour une expérience instantanée
   }
 
   return (
