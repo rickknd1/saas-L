@@ -46,6 +46,7 @@ export function useAuth() {
     refetch,
   } = useQuery({
     queryKey: ["user"],
+    enabled: typeof window !== 'undefined', // Désactiver pendant SSR/pre-rendering
     queryFn: async (): Promise<User | null> => {
       try {
         const response = await fetch("/api/auth/me", {

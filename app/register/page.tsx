@@ -3,9 +3,6 @@
 import type React from "react"
 
 import { Button } from "@/components/ui/button"
-
-// Désactiver le pré-rendering pour cette page (utilise React Query)
-export const dynamic = 'force-dynamic'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
