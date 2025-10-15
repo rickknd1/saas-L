@@ -1,8 +1,9 @@
-import { auth } from "@/lib/auth"
+import { headers } from "next/headers"
 import { NextResponse } from "next/server"
 
 /**
  * Utilitaire pour récupérer la session utilisateur dans les API routes
+ * Utilise les headers x-user-id et x-user-email ajoutés par le middleware
  *
  * Usage:
  * ```ts
@@ -15,8 +16,20 @@ import { NextResponse } from "next/server"
  */
 
 export async function getAuthSession() {
-  const session = await auth()
-  return session
+  const headersList = await headers()
+  const userId = headersList.get("x-user-id")
+  const userEmail = headersList.get("x-user-email")
+
+  if (!userId || !userEmail) {
+    return null
+  }
+
+  return {
+    user: {
+      id: userId,
+      email: userEmail,
+    },
+  }
 }
 
 /**
@@ -32,7 +45,7 @@ export async function getAuthSession() {
  */
 
 export async function requireAuth() {
-  const session = await auth()
+  const session = await getAuthSession()
 
   if (!session || !session.user) {
     return {
