@@ -1,0 +1,456 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["tracing"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// SOCLE COMMUN - AUTHENTIFICATION
+// ============================================
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  emailVerified     DateTime?
+  name              String?
+  firstName         String?
+  lastName          String?
+  password          String
+  phone             String?
+  role              String?   // Avocat, Associé, Collaborateur, Juriste
+  bio               String?
+  avatar            String?
+  organization      String?
+  organizationSiret String?
+
+  // Plan & Abonnement
+  plan              Plan      @default(FREEMIUM)
+  subscriptionId    String?   @unique
+  customerId        String?   // Stripe Customer ID
+
+  // 2FA
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+
+  // Timestamps
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastLoginAt       DateTime?
+
+  // Relations
+  sessions          Session[]
+  passwordResets    PasswordResetToken[]
+  verificationTokens VerificationToken[]
+
+  // Projets créés
+  ownedProjects     Project[] @relation("ProjectOwner")
+
+  // Participation aux projets
+  projectMembers    ProjectMember[]
+
+  // Documents uploadés
+  documents         Document[]
+
+  // Commentaires
+  comments          Comment[]
+
+  // Messages chat
+  messages          Message[]
+
+  // Notifications
+  notifications     Notification[]
+
+  // Abonnement
+  subscription      Subscription?
+  payments          Payment[]
+  invoices          Invoice[]
+
+  // Audit logs
+  auditLogs         AuditLog[]
+
+  @@map("users")
+}
+
+enum Plan {
+  FREEMIUM
+  STANDARD
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique
+  ipAddress    String?
+  userAgent    String?
+  location     String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  usedAt    DateTime?
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model VerificationToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  type      String   // email, 2fa
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// MODULE A - PROJETS & DOCUMENTS
+// ============================================
+
+model Project {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  status          ProjectStatus @default(DRAFT)
+  priority        Priority  @default(MEDIUM)
+  confidential    Boolean   @default(false)
+  deadline        DateTime?
+  progress        Int       @default(0) // 0-100
+
+  ownerId         String
+  owner           User      @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  members         ProjectMember[]
+  documents       Document[]
+  messages        Message[]
+  auditLogs       AuditLog[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_REVIEW
+  PENDING
+  COMPLETED
+  ARCHIVED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model ProjectMember {
+  id          String   @id @default(cuid())
+  projectId   String
+  userId      String
+  role        MemberRole @default(VIEWER)
+  invitedBy   String?
+
+  // Permissions
+  canEdit     Boolean  @default(false)
+  canInvite   Boolean  @default(false)
+  canDelete   Boolean  @default(false)
+
+  invitedAt   DateTime @default(now())
+  acceptedAt  DateTime?
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+enum MemberRole {
+  OWNER
+  EDITOR
+  VIEWER
+}
+
+model Document {
+  id              String   @id @default(cuid())
+  name            String
+  type            String   // pdf, docx, etc.
+  size            Int      // en bytes
+  url             String   // S3 URL
+  key             String   // S3 Key
+
+  projectId       String
+  uploadedById    String
+
+  version         Int      @default(1)
+  isCurrentVersion Boolean @default(true)
+  confidential    Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploadedBy      User     @relation(fields: [uploadedById], references: [id])
+
+  // Relations
+  versions        DocumentVersion[]
+  comments        Comment[]
+  auditLogs       AuditLog[]
+
+  @@index([projectId])
+  @@index([uploadedById])
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id              String   @id @default(cuid())
+  documentId      String
+  version         Int
+  name            String
+  url             String
+  key             String
+  size            Int
+  uploadedById    String
+
+  changes         String?  // Description des changements
+
+  createdAt       DateTime @default(now())
+
+  document        Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, version])
+  @@index([documentId])
+  @@map("document_versions")
+}
+
+// ============================================
+// MODULE B - COLLABORATION
+// ============================================
+
+model Comment {
+  id          String   @id @default(cuid())
+  content     String
+  documentId  String
+  userId      String
+  parentId    String?  // Pour les réponses
+
+  page        Int?     // Numéro de page du PDF
+  position    String?  // Position JSON { x, y }
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent      Comment? @relation("CommentReplies", fields: [parentId], references: [id])
+  replies     Comment[] @relation("CommentReplies")
+
+  @@index([documentId])
+  @@index([userId])
+  @@map("comments")
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  content     String
+  projectId   String
+  userId      String
+
+  read        Boolean  @default(false)
+  readAt      DateTime?
+
+  attachments String?  // JSON array of file URLs
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("messages")
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  type        NotificationType
+  title       String
+  message     String
+  link        String?
+
+  read        Boolean  @default(false)
+  readAt      DateTime?
+
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+  @@map("notifications")
+}
+
+enum NotificationType {
+  COMMENT
+  MENTION
+  DOCUMENT_UPDATED
+  PROJECT_SHARED
+  TEAM_MEMBER_ADDED
+  SYSTEM
+}
+
+// ============================================
+// MODULE C - MONÉTISATION & AVANCÉES
+// ============================================
+
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  stripeSubscriptionId String @unique
+  stripePriceId     String
+  stripeCustomerId  String
+
+  status            SubscriptionStatus
+  plan              Plan
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean @default(false)
+  canceledAt         DateTime?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([stripeSubscriptionId])
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+  INCOMPLETE
+}
+
+model Payment {
+  id                  String   @id @default(cuid())
+  userId              String
+  stripePaymentId     String   @unique
+  amount              Int      // En centimes
+  currency            String   @default("eur")
+  status              PaymentStatus
+
+  description         String?
+
+  createdAt           DateTime @default(now())
+
+  user                User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([stripePaymentId])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+model Invoice {
+  id                String   @id @default(cuid())
+  userId            String
+  stripeInvoiceId   String   @unique
+
+  number            String   @unique
+  amount            Int
+  currency          String   @default("eur")
+  status            InvoiceStatus
+
+  pdfUrl            String?
+
+  dueDate           DateTime?
+  paidAt            DateTime?
+
+  createdAt         DateTime @default(now())
+
+  user              User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([stripeInvoiceId])
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  action      String   // CREATE, UPDATE, DELETE, VIEW, DOWNLOAD, SHARE
+  resource    String   // project, document, user
+  resourceId  String
+
+  projectId   String?
+  documentId  String?
+
+  metadata    String?  // JSON avec détails supplémentaires
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  document    Document? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([documentId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

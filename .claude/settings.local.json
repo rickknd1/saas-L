@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx prisma:*)",
+      "Bash(set PGPASSWORD=postgres)",
+      "Bash(\"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe\" -U postgres -h localhost -p 5432 -c \"CREATE DATABASE saas_avocat;\")",
+      "Read(//c/Users/kayze/Downloads/companion-legal-saas/**)",
+      "Bash(git add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git push:*)",
+      "Bash(node -e \"console.log(require(''crypto'').randomBytes(32).toString(''base64''))\")",
+      "Bash(\"C:\\Program Files\\PostgreSQL\\18\\bin\\psql.exe\" -U postgres -h localhost -p 5432 -c \"SELECT 1 FROM pg_database WHERE datname = ''saas_avocat'';\")",
+      "Bash(npm run dev:*)",
+      "Bash(timeout:*)",
+      "Bash(curl -X POST http://localhost:3000/api/auth/register -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"test.avocat@cabinet-test.fr\"\",\"\"password\"\":\"\"TestPass123!\"\",\"\"name\"\":\"\"Jean Dupont\"\",\"\"firstName\"\":\"\"Jean\"\",\"\"lastName\"\":\"\"Dupont\"\",\"\"organization\"\":\"\"Cabinet Test\"\",\"\"role\"\":\"\"avocat\"\"}\")",
+      "Bash(curl -X POST http://localhost:3001/api/auth/register -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"test.avocat@cabinet-test.fr\"\",\"\"password\"\":\"\"TestPass123!\"\",\"\"name\"\":\"\"Jean Dupont\"\",\"\"firstName\"\":\"\"Jean\"\",\"\"lastName\"\":\"\"Dupont\"\",\"\"organization\"\":\"\"Cabinet Test\"\",\"\"role\"\":\"\"avocat\"\"}\")",
+      "Bash(curl -s -X POST http://localhost:3000/api/auth/register -H \"Content-Type: application/json\" -d \"{\"\"email\"\":\"\"test.avocat@cabinet-test.fr\"\",\"\"password\"\":\"\"TestPass123!\"\",\"\"name\"\":\"\"Jean Dupont\"\",\"\"firstName\"\":\"\"Jean\"\",\"\"lastName\"\":\"\"Dupont\"\",\"\"organization\"\":\"\"Cabinet Test\"\",\"\"role\"\":\"\"avocat\"\"}\")",
+      "Bash(curl -s -X POST 'http://localhost:3000/api/auth/callback/credentials' -H 'Content-Type: application/x-www-form-urlencoded' -d 'email=test.avocat@cabinet-test.fr&password=TestPass123!' -c cookies.txt -D -)",
+      "Bash(curl:*)",
+      "Bash(node:*)",
+      "Bash(start-clean.bat)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c:*)",
+      "Bash(tasklist)",
+      "Bash(findstr:*)",
+      "Bash(test:*)",
+      "Bash(scoop:*)",
+      "Bash(git config:*)",
+      "Bash(stripe listen:*)",
+      "Bash(netstat:*)",
+      "Bash(stripe trigger:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
