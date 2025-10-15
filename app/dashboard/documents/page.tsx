@@ -15,8 +15,14 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { useAuth } from "@/hooks/use-auth"
+import { useDocuments, useDocumentStats } from "@/hooks/use-documents"
 
 export default function DocumentsPage() {
+  const { userId } = useAuth()
+  const { documents, isLoading } = useDocuments(userId)
+  const { stats, isLoading: statsLoading } = useDocumentStats(userId)
+
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -28,74 +34,41 @@ export default function DocumentsPage() {
     requireAuth: true,
     notifyOnAccess: true,
   })
-  const documents = [
-    {
-      id: "1",
-      name: "Contrat de prestation - Client ABC",
-      project: "Projet ABC Corp",
-      version: "v3.2",
-      size: "2.4 MB",
-      lastModified: "Il y a 2 heures",
-      modifiedBy: "Marie Dubois",
-      status: "En révision",
-      confidential: true,
-    },
-    {
-      id: "2",
-      name: "Conditions générales de vente 2025",
-      project: "Refonte CGV",
-      version: "v1.0",
-      size: "1.8 MB",
-      lastModified: "Il y a 5 heures",
-      modifiedBy: "Jean Martin",
-      status: "Validé",
-      confidential: false,
-    },
-    {
-      id: "3",
-      name: "Accord de confidentialité - Partenaire XYZ",
-      project: "Partenariat XYZ",
-      version: "v2.1",
-      size: "1.2 MB",
-      lastModified: "Hier",
-      modifiedBy: "Sophie Laurent",
-      status: "En attente",
-      confidential: true,
-    },
-    {
-      id: "4",
-      name: "Contrat de travail - Nouveau collaborateur",
-      project: "Recrutement 2025",
-      version: "v1.5",
-      size: "980 KB",
-      lastModified: "Il y a 2 jours",
-      modifiedBy: "Pierre Durand",
-      status: "Brouillon",
-      confidential: true,
-    },
-    {
-      id: "5",
-      name: "Bail commercial - Local Paris 8ème",
-      project: "Expansion bureaux",
-      version: "v4.0",
-      size: "3.1 MB",
-      lastModified: "Il y a 3 jours",
-      modifiedBy: "Marie Dubois",
-      status: "Validé",
-      confidential: false,
-    },
-    {
-      id: "6",
-      name: "Protocole d'accord transactionnel",
-      project: "Litige Client DEF",
-      version: "v2.3",
-      size: "1.5 MB",
-      lastModified: "Il y a 1 semaine",
-      modifiedBy: "Jean Martin",
-      status: "En révision",
-      confidential: true,
-    },
-  ]
+
+  // Format file size from bytes to readable format
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  // Format time ago from date string
+  const formatTimeAgo = (dateString: string) => {
+    const now = new Date()
+    const date = new Date(dateString)
+    const diffMs = now.getTime() - date.getTime()
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffHours < 1) return "Il y a quelques minutes"
+    if (diffHours < 2) return "Il y a 1 heure"
+    if (diffHours < 24) return `Il y a ${diffHours} heures`
+    if (diffDays < 2) return "Hier"
+    if (diffDays < 7) return `Il y a ${diffDays} jours`
+    return `Il y a ${Math.floor(diffDays / 7)} semaine${Math.floor(diffDays / 7) > 1 ? 's' : ''}`
+  }
+
+  // Map document status to French labels
+  const getStatusLabel = (status: string) => {
+    const statusMap: Record<string, string> = {
+      DRAFT: "Brouillon",
+      IN_REVIEW: "En révision",
+      PENDING: "En attente",
+      VALIDATED: "Validé",
+      ARCHIVED: "Archivé",
+    }
+    return statusMap[status] || status
+  }
 
   const handleUpload = () => {
     setShowUploadModal(true)
@@ -186,7 +159,8 @@ export default function DocumentsPage() {
   }
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    const label = getStatusLabel(status)
+    switch (label) {
       case "Validé":
         return "bg-green-500/10 text-green-500 hover:bg-green-500/20"
       case "En révision":
@@ -200,13 +174,22 @@ export default function DocumentsPage() {
     }
   }
 
+  if (isLoading || statsLoading) {
+    return <div className="flex flex-1 flex-col gap-6 p-6">Chargement...</div>
+  }
+
   return (
-    <div className="flex flex-1 flex-col gap-6 p-6">
+    <div className="relative min-h-screen p-6">
+      {/* Gradient Mesh Background */}
+      <div className="gradient-mesh fixed inset-0 -z-10" />
+
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold">Documents</h1>
-          <p className="text-muted-foreground">Gérez tous vos documents juridiques en un seul endroit</p>
+          <h1 className="font-serif text-5xl font-bold mb-2 text-foreground">
+            Documents
+          </h1>
+          <p className="text-muted-foreground text-lg">Gérez tous vos documents juridiques en un seul endroit</p>
         </div>
         <Button onClick={handleUpload}>
           <Upload className="mr-2 h-4 w-4" />
@@ -215,14 +198,14 @@ export default function DocumentsPage() {
       </div>
 
       {/* Search and Filters */}
-      <Card>
+      <Card className="card-premium mb-6">
         <CardContent className="pt-6">
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Rechercher un document..." className="pl-9" />
+              <Input placeholder="Rechercher un document..." className="pl-9 glass border-glow" />
             </div>
-            <Button variant="outline">
+            <Button variant="outline" className="glass hover-lift">
               <Filter className="mr-2 h-4 w-4" />
               Filtres
             </Button>
@@ -231,118 +214,126 @@ export default function DocumentsPage() {
       </Card>
 
       {/* Documents Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
+      <div className="grid gap-6 md:grid-cols-4 mb-6">
+        <Card className="card-premium border-glow group">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none" />
           <CardHeader className="pb-3">
-            <CardDescription>Total documents</CardDescription>
-            <CardTitle className="text-3xl">156</CardTitle>
+            <CardDescription className="text-muted-foreground">Total documents</CardDescription>
+            <CardTitle className="text-4xl font-bold text-primary">{stats.total || 0}</CardTitle>
           </CardHeader>
         </Card>
-        <Card>
+        <Card className="card-premium border-glow group">
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none" />
           <CardHeader className="pb-3">
-            <CardDescription>En révision</CardDescription>
-            <CardTitle className="text-3xl text-blue-500">23</CardTitle>
+            <CardDescription className="text-muted-foreground">En révision</CardDescription>
+            <CardTitle className="text-4xl font-bold text-blue-600 dark:text-blue-400">{stats.inReview || 0}</CardTitle>
           </CardHeader>
         </Card>
-        <Card>
+        <Card className="card-premium border-glow group">
+          <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none" />
           <CardHeader className="pb-3">
-            <CardDescription>Validés</CardDescription>
-            <CardTitle className="text-3xl text-green-500">98</CardTitle>
+            <CardDescription className="text-muted-foreground">Validés</CardDescription>
+            <CardTitle className="text-4xl font-bold text-green-600 dark:text-green-400">{stats.validated || 0}</CardTitle>
           </CardHeader>
         </Card>
-        <Card>
+        <Card className="card-premium border-glow group">
+          <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none" />
           <CardHeader className="pb-3">
-            <CardDescription>En attente</CardDescription>
-            <CardTitle className="text-3xl text-yellow-500">35</CardTitle>
+            <CardDescription className="text-muted-foreground">En attente</CardDescription>
+            <CardTitle className="text-4xl font-bold text-yellow-600 dark:text-yellow-400">{stats.pending || 0}</CardTitle>
           </CardHeader>
         </Card>
       </div>
 
       {/* Documents List */}
-      <Card>
+      <Card className="card-premium border-glow">
         <CardHeader>
-          <CardTitle>Tous les documents</CardTitle>
+          <CardTitle className="font-serif text-2xl">Tous les documents</CardTitle>
           <CardDescription>{documents.length} documents trouvés</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {documents.map((doc) => (
-              <div
-                key={doc.id}
-                className="flex items-center justify-between rounded-lg border border-border p-4 transition-colors hover:bg-muted/50"
-              >
-                <div className="flex items-start gap-4 flex-1">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                    <FileText className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <Link
-                        href={`/dashboard/documents/${doc.id}`}
-                        className="font-medium hover:text-primary transition-colors truncate"
-                      >
-                        {doc.name}
-                      </Link>
-                      <Badge variant="secondary" className={getStatusColor(doc.status)}>
-                        {doc.status}
-                      </Badge>
-                      {doc.confidential && (
-                        <Badge variant="secondary" className="bg-red-500/10 text-red-500 hover:bg-red-500/20">
-                          <Lock className="mr-1 h-3 w-3" />
-                          Confidentiel
-                        </Badge>
-                      )}
+          {documents.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">Aucun document trouvé</div>
+          ) : (
+            <div className="space-y-4">
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between rounded-xl glass-premium hover-lift p-4 border-glow group"
+                >
+                  <div className="flex items-start gap-4 flex-1">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-accent/10 group-hover:from-primary/30 group-hover:to-accent/20 transition-all">
+                      <FileText className="h-6 w-6 text-primary" />
                     </div>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-                      <span>{doc.project}</span>
-                      <span>•</span>
-                      <span>{doc.version}</span>
-                      <span>•</span>
-                      <span>{doc.size}</span>
-                      <span>•</span>
-                      <span>
-                        Modifié {doc.lastModified} par {doc.modifiedBy}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link href={`/dashboard/documents/${doc.id}`}>
-                      <Eye className="h-4 w-4" />
-                    </Link>
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm">
-                        <MoreVertical className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem asChild>
-                        <Link href={`/dashboard/documents/${doc.id}`}>
-                          <Eye className="mr-2 h-4 w-4" />
-                          Ouvrir
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <Link
+                          href={`/dashboard/documents/${doc.id}`}
+                          className="font-medium hover:text-primary transition-colors truncate"
+                        >
+                          {doc.name}
                         </Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleDownload(doc)}>
-                        <Download className="mr-2 h-4 w-4" />
-                        Télécharger
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleShare(doc)}>
-                        <Share2 className="mr-2 h-4 w-4" />
-                        Partager
-                      </DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteInit(doc)}>
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Supprimer
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        <Badge variant="secondary" className={getStatusColor(doc.type)}>
+                          {getStatusLabel(doc.type)}
+                        </Badge>
+                        {doc.confidential && (
+                          <Badge variant="secondary" className="bg-red-500/10 text-red-500 hover:bg-red-500/20">
+                            <Lock className="mr-1 h-3 w-3" />
+                            Confidentiel
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                        <span>{doc.project.name}</span>
+                        <span>•</span>
+                        <span>v{doc.version}</span>
+                        <span>•</span>
+                        <span>{formatFileSize(doc.size)}</span>
+                        <span>•</span>
+                        <span>
+                          Modifié {formatTimeAgo(doc.updatedAt)} par {doc.uploadedBy.name || doc.uploadedBy.email}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" asChild className="glass hover-lift">
+                      <Link href={`/dashboard/documents/${doc.id}`}>
+                        <Eye className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="glass hover-lift">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="glass-premium border-glow">
+                        <DropdownMenuItem asChild className="cursor-pointer hover:glass">
+                          <Link href={`/dashboard/documents/${doc.id}`}>
+                            <Eye className="mr-2 h-4 w-4" />
+                            Ouvrir
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleDownload(doc)} className="cursor-pointer hover:glass">
+                          <Download className="mr-2 h-4 w-4" />
+                          Télécharger
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleShare(doc)} className="cursor-pointer hover:glass">
+                          <Share2 className="mr-2 h-4 w-4" />
+                          Partager
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive cursor-pointer hover:bg-destructive/10" onClick={() => handleDeleteInit(doc)}>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Supprimer
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

@@ -1,328 +1,296 @@
-"use client"
+'use client'
 
-import { useState, useRef, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
-import { Textarea } from "@/components/ui/textarea"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Separator } from "@/components/ui/separator"
-import {
-  Send,
-  Paperclip,
-  Smile,
-  MoreVertical,
-  Users,
-  Clock,
-  Check,
-  CheckCheck,
-  X,
-} from "lucide-react"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+/**
+ * Composant de chat pour un projet
+ * Module A2 - Messagerie Instantanée (CDC)
+ *
+ * UI améliorée style messaging app moderne
+ */
 
-interface Message {
-  id: string
-  user: {
-    name: string
-    initials: string
-    color: string
-  }
-  content: string
-  timestamp: Date
-  read: boolean
-  isCurrentUser?: boolean
-}
+import { useState, useRef, useEffect } from 'react'
+import { useChat } from '@/hooks/use-chat'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Send, Loader2, WifiOff, Wifi } from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
+import { fr } from 'date-fns/locale'
+import { cn } from '@/lib/utils'
+import { useAuth } from '@/hooks/use-auth'
 
 interface ProjectChatProps {
   projectId: string
   projectName: string
-  onClose?: () => void
 }
 
-// Mock data
-const mockMessages: Message[] = [
-  {
-    id: "1",
-    user: { name: "Marie Dubois", initials: "MD", color: "bg-blue-500" },
-    content: "Bonjour à tous, j'ai uploadé la nouvelle version du contrat. Pouvez-vous la réviser ?",
-    timestamp: new Date(Date.now() - 3600000),
-    read: true,
-  },
-  {
-    id: "2",
-    user: { name: "Pierre Martin", initials: "PM", color: "bg-green-500" },
-    content: "Parfait, je regarde ça maintenant.",
-    timestamp: new Date(Date.now() - 3000000),
-    read: true,
-  },
-  {
-    id: "3",
-    user: { name: "Sophie Laurent", initials: "SL", color: "bg-purple-500" },
-    content: "La clause 4.2 me semble un peu ambiguë. On devrait la reformuler.",
-    timestamp: new Date(Date.now() - 1800000),
-    read: true,
-  },
-  {
-    id: "4",
-    user: { name: "Vous", initials: "ME", color: "bg-primary" },
-    content: "D'accord, je m'en occupe cet après-midi.",
-    timestamp: new Date(Date.now() - 600000),
-    read: true,
-    isCurrentUser: true,
-  },
-]
+export function ProjectChat({
+  projectId,
+  projectName,
+}: ProjectChatProps) {
+  // Récupérer l'utilisateur connecté
+  const { user } = useAuth()
+  const currentUserId = user?.id || ''
 
-const activeMembers = [
-  { name: "Marie Dubois", initials: "MD", status: "online" },
-  { name: "Pierre Martin", initials: "PM", status: "online" },
-  { name: "Sophie Laurent", initials: "SL", status: "away" },
-]
+  const {
+    messages,
+    loading,
+    hasMore,
+    typingUsers,
+    isConnected,
+    sendMessage,
+    startTyping,
+    stopTyping,
+    loadMoreMessages,
+  } = useChat(projectId, currentUserId)
 
-export function ProjectChat({ projectId, projectName, onClose }: ProjectChatProps) {
-  const [messages, setMessages] = useState<Message[]>(mockMessages)
-  const [newMessage, setNewMessage] = useState("")
+  const [messageInput, setMessageInput] = useState('')
   const [isTyping, setIsTyping] = useState(false)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const typingTimeoutRef = useRef<NodeJS.Timeout>()
 
-  // Auto-scroll to bottom when new messages arrive
+  /**
+   * Auto-scroll vers le bas quand un nouveau message arrive
+   */
   useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]')
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight
-      }
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSendMessage = () => {
-    if (!newMessage.trim()) return
-
-    const message: Message = {
-      id: Date.now().toString(),
-      user: { name: "Vous", initials: "ME", color: "bg-primary" },
-      content: newMessage,
-      timestamp: new Date(),
-      read: false,
-      isCurrentUser: true,
+  /**
+   * Gérer la frappe
+   */
+  const handleTyping = () => {
+    if (!isTyping) {
+      setIsTyping(true)
+      startTyping()
     }
 
-    setMessages([...messages, message])
-    setNewMessage("")
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
 
-    // Simulate other user typing
-    setTimeout(() => {
-      setIsTyping(true)
-    }, 1000)
-
-    setTimeout(() => {
+    typingTimeoutRef.current = setTimeout(() => {
       setIsTyping(false)
+      stopTyping()
     }, 3000)
   }
 
-  const formatTime = (date: Date) => {
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const minutes = Math.floor(diff / 60000)
-    const hours = Math.floor(diff / 3600000)
+  /**
+   * Envoyer un message
+   */
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault()
 
-    if (minutes < 1) return "À l'instant"
-    if (minutes < 60) return `Il y a ${minutes} min`
-    if (hours < 24) return `Il y a ${hours}h`
-    return date.toLocaleDateString("fr-FR", { day: "numeric", month: "short" })
+    if (!messageInput.trim()) return
+
+    sendMessage(messageInput)
+    setMessageInput('')
+
+    if (isTyping) {
+      setIsTyping(false)
+      stopTyping()
+    }
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+  }
+
+  /**
+   * Obtenir les initiales pour l'avatar
+   */
+  const getInitials = (name: string | null, email: string) => {
+    if (name) {
+      return name
+        .split(' ')
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+        .substring(0, 2)
+    }
+    return email.substring(0, 2).toUpperCase()
   }
 
   return (
-    <Card className="flex h-full flex-col border-border">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border p-3 sm:p-4">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate font-semibold text-sm sm:text-base">{projectName}</h3>
-            <div className="mt-1 flex items-center gap-2">
-              <div className="flex -space-x-2">
-                {activeMembers.slice(0, 3).map((member, i) => (
-                  <div key={i} className="relative">
-                    <Avatar className="h-5 w-5 sm:h-6 sm:w-6 border-2 border-background">
-                      <AvatarFallback className="bg-primary/10 text-[9px] sm:text-[10px] text-primary">
-                        {member.initials}
-                      </AvatarFallback>
-                    </Avatar>
-                    {member.status === "online" && (
-                      <span className="absolute bottom-0 right-0 h-1.5 w-1.5 sm:h-2 sm:w-2 rounded-full border border-background bg-green-500"></span>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <span className="text-[10px] sm:text-xs text-muted-foreground whitespace-nowrap">
-                {activeMembers.filter((m) => m.status === "online").length} en ligne
-              </span>
+    <div className="flex flex-col h-full glass-premium border-glow rounded-xl overflow-hidden">
+      {/* Header fixe */}
+      <div className="flex items-center justify-between p-4 border-b border-border/50 bg-card/50 shrink-0">
+        <div className="flex-1">
+          <h3 className="font-semibold text-lg">{projectName}</h3>
+          <p className="text-sm text-muted-foreground">
+            {messages.length} message{messages.length > 1 ? 's' : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {isConnected ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-500/10">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-xs font-medium text-green-700 dark:text-green-400">En ligne</span>
             </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0 sm:h-9 sm:w-auto sm:px-3">
-              <Users className="h-4 w-4" />
-              <span className="ml-2 hidden sm:inline">Membres</span>
-            </Button>
-            {onClose && (
-              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9" onClick={onClose}>
-                <X className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
+          ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/10">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-xs font-medium text-red-700 dark:text-red-400">Hors ligne</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Messages - zone scrollable */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ScrollArea ref={scrollAreaRef} className="h-full">
-          <div className="p-3 sm:p-4">
-            <div className="space-y-3 sm:space-y-4">
-              {messages.map((message, index) => {
-                const showAvatar =
-                  index === 0 || messages[index - 1].user.name !== message.user.name
+      {/* Zone des messages avec scroll interne */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0">
+        {loading && messages.length === 0 ? (
+          // Skeleton loading
+          <div className="space-y-4">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className={cn("flex gap-3", i % 2 === 0 ? "" : "flex-row-reverse")}>
+                <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+                <div className="flex-1 space-y-2 max-w-[70%]">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-16 w-full rounded-2xl" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <>
+            {/* Bouton charger plus */}
+            {hasMore && (
+              <div className="flex justify-center pb-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={loadMoreMessages}
+                  disabled={loading}
+                  className="text-xs"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      Chargement...
+                    </>
+                  ) : (
+                    'Charger plus de messages'
+                  )}
+                </Button>
+              </div>
+            )}
 
-                return (
-                  <div
-                    key={message.id}
-                    className={`flex gap-2 sm:gap-3 ${message.isCurrentUser ? "flex-row-reverse" : "flex-row"}`}
-                  >
-                    {showAvatar && !message.isCurrentUser ? (
-                      <Avatar className="h-7 w-7 sm:h-8 sm:w-8 shrink-0">
-                        <AvatarFallback className={`${message.user.color} text-white text-[10px] sm:text-xs`}>
-                          {message.user.initials}
-                        </AvatarFallback>
-                      </Avatar>
-                    ) : !message.isCurrentUser ? (
-                      <div className="w-7 sm:w-8 shrink-0" />
-                    ) : null}
+            {/* Liste des messages */}
+            {messages.map((message) => {
+              const isOwnMessage = message.userId === currentUserId
 
-                    <div
-                      className={`flex max-w-[85%] sm:max-w-[70%] flex-col gap-1 ${
-                        message.isCurrentUser ? "items-end" : "items-start"
-                      }`}
-                    >
-                      {showAvatar && !message.isCurrentUser && (
-                        <span className="text-[10px] sm:text-xs font-medium">{message.user.name}</span>
-                      )}
-                      <div
-                        className={`group relative rounded-lg px-3 py-2 ${
-                          message.isCurrentUser
-                            ? "bg-primary text-primary-foreground"
-                            : "bg-muted"
-                        }`}
-                      >
-                        <p className="text-xs sm:text-sm whitespace-pre-wrap break-words">{message.content}</p>
-                        {message.isCurrentUser && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="absolute -right-8 top-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 hidden sm:flex"
-                              >
-                                <MoreVertical className="h-3 w-3" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem>Modifier</DropdownMenuItem>
-                              <DropdownMenuItem className="text-destructive">Supprimer</DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 text-[9px] sm:text-[10px] text-muted-foreground">
-                        <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
-                        <span>{formatTime(message.timestamp)}</span>
-                        {message.isCurrentUser && (
-                          <>
-                            {message.read ? (
-                              <CheckCheck className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-blue-500" />
-                            ) : (
-                              <Check className="h-2.5 w-2.5 sm:h-3 sm:w-3" />
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-
-              {/* Typing indicator */}
-              {isTyping && (
-                <div className="flex gap-2 sm:gap-3">
-                  <Avatar className="h-7 w-7 sm:h-8 sm:w-8">
-                    <AvatarFallback className="bg-green-500 text-[10px] sm:text-xs text-white">PM</AvatarFallback>
+              return (
+                <div
+                  key={message.id}
+                  className={cn(
+                    'flex gap-3 items-end',
+                    isOwnMessage && 'flex-row-reverse'
+                  )}
+                >
+                  {/* Avatar */}
+                  <Avatar className="h-8 w-8 shrink-0">
+                    <AvatarImage src={message.user.avatar || undefined} />
+                    <AvatarFallback className={cn(
+                      "text-xs",
+                      isOwnMessage ? "bg-primary/10 text-primary" : "bg-muted"
+                    )}>
+                      {getInitials(message.user.name, message.user.email)}
+                    </AvatarFallback>
                   </Avatar>
-                  <div className="rounded-lg bg-muted px-3 py-2">
-                    <div className="flex gap-1">
-                      <div className="h-1.5 w-1.5 sm:h-2 sm:w-2 animate-bounce rounded-full bg-muted-foreground" />
-                      <div
-                        className="h-1.5 w-1.5 sm:h-2 sm:w-2 animate-bounce rounded-full bg-muted-foreground"
-                        style={{ animationDelay: "0.1s" }}
-                      />
-                      <div
-                        className="h-1.5 w-1.5 sm:h-2 sm:w-2 animate-bounce rounded-full bg-muted-foreground"
-                        style={{ animationDelay: "0.2s" }}
-                      />
+
+                  {/* Bulle de message */}
+                  <div
+                    className={cn(
+                      'flex flex-col max-w-[70%]',
+                      isOwnMessage ? 'items-end' : 'items-start'
+                    )}
+                  >
+                    {/* Nom et timestamp */}
+                    <div className={cn(
+                      "flex items-center gap-2 mb-1 px-1",
+                      isOwnMessage && "flex-row-reverse"
+                    )}>
+                      <span className="text-xs font-medium text-foreground">
+                        {isOwnMessage ? 'Vous' : message.user.name || message.user.email}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(message.createdAt), {
+                          addSuffix: true,
+                          locale: fr,
+                        })}
+                      </span>
+                    </div>
+
+                    {/* Message content */}
+                    <div
+                      className={cn(
+                        'rounded-2xl px-4 py-2.5 text-sm break-words',
+                        isOwnMessage
+                          ? 'bg-primary text-primary-foreground rounded-br-md'
+                          : 'bg-muted text-foreground rounded-bl-md'
+                      )}
+                    >
+                      <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          </div>
-        </ScrollArea>
+              )
+            })}
+
+            {/* Indicateur de frappe */}
+            {typingUsers.length > 0 && (
+              <div className="flex items-center gap-3">
+                <Avatar className="h-8 w-8 shrink-0">
+                  <AvatarFallback className="bg-muted text-xs">
+                    {typingUsers[0].userName.substring(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3 flex items-center gap-1">
+                  <div className="flex gap-1">
+                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Référence pour auto-scroll */}
+            <div ref={messagesEndRef} />
+          </>
+        )}
       </div>
 
-      <Separator className="shrink-0" />
-
-      {/* Input - Zone de saisie fixe */}
-      <div className="shrink-0 border-t border-border bg-background p-3 sm:p-4">
+      {/* Input fixe en bas */}
+      <form onSubmit={handleSendMessage} className="p-4 border-t border-border/50 bg-card/50 shrink-0">
         <div className="flex gap-2">
-          <div className="flex flex-1 flex-col gap-2">
-            <Textarea
-              ref={textareaRef}
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              placeholder="Écrivez votre message..."
-              className="min-h-[50px] sm:min-h-[60px] max-h-[100px] sm:max-h-[120px] resize-none text-sm"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSendMessage()
-                }
-              }}
-            />
-            <div className="flex items-center justify-between">
-              <div className="flex gap-1">
-                <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7">
-                  <Paperclip className="h-3 w-3 sm:h-4 sm:w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7">
-                  <Smile className="h-3 w-3 sm:h-4 sm:w-4" />
-                </Button>
-              </div>
-              <span className="hidden sm:inline text-[10px] text-muted-foreground">
-                Entrée pour envoyer • Shift+Entrée pour nouvelle ligne
-              </span>
-            </div>
-          </div>
+          <Input
+            value={messageInput}
+            onChange={(e) => {
+              setMessageInput(e.target.value)
+              handleTyping()
+            }}
+            placeholder="Écrivez un message..."
+            disabled={!isConnected}
+            className="flex-1 h-10"
+            maxLength={2000}
+          />
           <Button
-            onClick={handleSendMessage}
-            disabled={!newMessage.trim()}
-            className="h-[50px] w-[50px] sm:h-[60px] sm:w-[60px] shrink-0"
+            type="submit"
+            disabled={!isConnected || !messageInput.trim()}
+            size="icon"
+            className="h-10 w-10 shrink-0"
           >
-            <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+            <Send className="h-4 w-4" />
           </Button>
         </div>
-      </div>
-    </Card>
+        {!isConnected && (
+          <p className="text-xs text-destructive mt-2 flex items-center gap-1.5">
+            <WifiOff className="h-3 w-3" />
+            Connexion perdue. Reconnexion en cours...
+          </p>
+        )}
+      </form>
+    </div>
   )
 }

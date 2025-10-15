@@ -1,23 +1,23 @@
 "use client"
 
-import { useUser } from "./use-user"
+import { useAuth } from "./use-auth"
+import { type UserPlan } from "@/lib/plan-manager"
 
 /**
- * Hook pour récupérer le plan utilisateur depuis l'API
- * Module C (@kayzeur dylann)
- *
- * ✅ Migration localStorage → Database
- * Ce hook remplace l'ancien système localStorage par une lecture depuis l'API
+ * Hook simplifié pour récupérer le plan utilisateur
+ * Lit directement depuis useAuth (React Query cache)
+ * Plus besoin de localStorage
  */
-
 export function useUserPlan() {
-  const { user, plan, isLoading } = useUser()
+  const { user, isLoading } = useAuth()
+
+  // Lire le plan directement depuis l'utilisateur (source unique de vérité)
+  const plan: UserPlan = user?.plan ? (user.plan.toLowerCase() as UserPlan) : "freemium"
 
   return {
-    plan: plan.toLowerCase() as "freemium" | "standard",
+    plan,
     isLoading,
-    isStandard: plan === "STANDARD",
-    isFreemium: plan === "FREEMIUM",
-    user,
+    isStandard: plan === "standard",
+    isFreemium: plan === "freemium",
   }
 }

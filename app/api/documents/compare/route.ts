@@ -1,110 +1,132 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import * as Diff from "diff"
+import { prisma } from "@/lib/prisma"
+import { extractTextOnly, cleanExtractedText } from "@/lib/pdf-extract"
+import { applyRateLimit, RATE_LIMIT_CONFIGS, getRequestIdentifier } from "@/lib/rate-limit"
 
 /**
  * API de comparaison de documents
- * POST /api/documents/compare
- *
- * Fonctionnalité du Module C (@kayzeur dylann)
  * Compare deux versions de documents et retourne les différences
+ *
+ * Cahier des charges: Section 2.1 - Comparaison de Documents
  */
 
-interface CompareRequest {
-  documentId1: string
-  documentId2: string
-  content1?: string
-  content2?: string
-}
-
-interface DiffResult {
-  type: "added" | "removed" | "unchanged"
-  value: string
-  lineNumber?: number
-}
-
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    const body: CompareRequest = await request.json()
+    // SÉCURITÉ: Rate limiting pour protéger contre l'abus (opération coûteuse)
+    const rateLimitResponse = applyRateLimit(
+      request,
+      RATE_LIMIT_CONFIGS.COMPARE,
+      getRequestIdentifier(request, 'compare')
+    )
+    if (rateLimitResponse) return rateLimitResponse
+
+    const body = await request.json()
     const { documentId1, documentId2, content1, content2 } = body
 
-    // Validation
-    if (!documentId1 || !documentId2) {
-      return NextResponse.json(
-        { error: "documentId1 and documentId2 are required" },
-        { status: 400 }
-      )
-    }
+    let finalContent1: string
+    let finalContent2: string
 
-    // Pour le MVP, on accepte le contenu directement
-    // En production, on récupérerait le contenu depuis S3 ou la BDD
-    if (!content1 || !content2) {
-      return NextResponse.json(
-        { error: "content1 and content2 are required for comparison" },
-        { status: 400 }
-      )
-    }
+    // Cas 1 : IDs de documents fournis - récupérer et extraire le texte
+    if (documentId1 && documentId2) {
+      try {
+        // Récupérer les documents depuis la BDD
+        const [doc1, doc2] = await Promise.all([
+          prisma.document.findUnique({
+            where: { id: documentId1 },
+            select: { fileData: true, mimeType: true, name: true }
+          }),
+          prisma.document.findUnique({
+            where: { id: documentId2 },
+            select: { fileData: true, mimeType: true, name: true }
+          })
+        ])
 
-    // Comparaison ligne par ligne avec jsdiff
-    const differences = Diff.diffLines(content1, content2)
-
-    // Formater les résultats
-    const formattedDiffs: DiffResult[] = []
-    let lineNumber = 0
-
-    differences.forEach((part) => {
-      const lines = part.value.split("\n")
-
-      lines.forEach((line, index) => {
-        if (line.trim() === "" && index === lines.length - 1) return
-
-        let type: "added" | "removed" | "unchanged" = "unchanged"
-
-        if (part.added) {
-          type = "added"
-        } else if (part.removed) {
-          type = "removed"
+        if (!doc1 || !doc2) {
+          return NextResponse.json(
+            { error: "Un ou plusieurs documents sont introuvables" },
+            { status: 404 }
+          )
         }
 
-        formattedDiffs.push({
-          type,
-          value: line,
-          lineNumber: lineNumber++
-        })
-      })
+        // Extraire le texte des PDFs
+        if (doc1.mimeType === "application/pdf" && doc2.mimeType === "application/pdf") {
+          const [text1, text2] = await Promise.all([
+            extractTextOnly(Buffer.from(doc1.fileData)),
+            extractTextOnly(Buffer.from(doc2.fileData))
+          ])
+
+          finalContent1 = cleanExtractedText(text1)
+          finalContent2 = cleanExtractedText(text2)
+        } else {
+          // Pour les fichiers non-PDF, convertir directement en texte
+          finalContent1 = doc1.fileData.toString('utf-8')
+          finalContent2 = doc2.fileData.toString('utf-8')
+        }
+      } catch (error) {
+        console.error("Erreur lors de la récupération des documents:", error)
+        return NextResponse.json(
+          { error: "Erreur lors de la récupération ou de l'extraction du contenu des documents" },
+          { status: 500 }
+        )
+      }
+    }
+    // Cas 2 : Contenus fournis directement
+    else if (content1 && content2) {
+      finalContent1 = content1
+      finalContent2 = content2
+    }
+    // Cas 3 : Données manquantes
+    else {
+      return NextResponse.json(
+        { error: "Vous devez fournir soit documentId1 et documentId2, soit content1 et content2" },
+        { status: 400 }
+      )
+    }
+
+    // Comparaison avec jsdiff
+    const differences = Diff.diffWords(finalContent1, finalContent2)
+
+    // Calcul des statistiques
+    let addedCount = 0
+    let removedCount = 0
+    let modifiedCount = 0
+
+    differences.forEach((part) => {
+      if (part.added) {
+        addedCount += part.value.split(/\s+/).length
+      } else if (part.removed) {
+        removedCount += part.value.split(/\s+/).length
+      }
     })
 
-    // Statistiques
-    const stats = {
-      totalLines: formattedDiffs.length,
-      added: formattedDiffs.filter(d => d.type === "added").length,
-      removed: formattedDiffs.filter(d => d.type === "removed").length,
-      unchanged: formattedDiffs.filter(d => d.type === "unchanged").length
+    // Détection des modifications (removed + added consécutifs)
+    for (let i = 0; i < differences.length - 1; i++) {
+      if (differences[i].removed && differences[i + 1].added) {
+        modifiedCount++
+      }
     }
 
     return NextResponse.json({
       success: true,
-      documentId1,
-      documentId2,
-      differences: formattedDiffs,
-      stats
-    })
-
-  } catch (error) {
-    console.error("Error comparing documents:", error)
-    return NextResponse.json(
-      {
-        error: "Failed to compare documents",
-        details: error instanceof Error ? error.message : "Unknown error"
+      differences,
+      stats: {
+        added: addedCount,
+        removed: removedCount,
+        modified: modifiedCount,
+        total: differences.length,
       },
+      metadata: {
+        documentId1,
+        documentId2,
+        comparedAt: new Date().toISOString(),
+      },
+    })
+  } catch (error) {
+    console.error("Erreur lors de la comparaison:", error)
+    return NextResponse.json(
+      { error: "Erreur lors de la comparaison des documents" },
       { status: 500 }
     )
   }
-}
-
-// Méthode GET pour récupérer l'historique des comparaisons (future fonctionnalité)
-export async function GET(request: NextRequest) {
-  return NextResponse.json(
-    { error: "Method not implemented yet" },
-    { status: 501 }
-  )
 }

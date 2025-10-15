@@ -1,24 +1,28 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { requireAuth } from "@/lib/get-session"
 
 /**
- * API d'export des données utilisateur (RGPD)
- * GET /api/users/me/export
+ * API d'export des données personnelles (RGPD)
+ * Retourne toutes les données de l'utilisateur au format JSON
  *
- * Module C (@kayzeur dylann)
- * Permet à l'utilisateur d'exporter toutes ses données conformément au RGPD
+ * Cahier des charges: Section 3.3 - Conformité RGPD
+ * Article RGPD: Droit d'accès (Article 15)
  */
 
-export async function GET(request: NextRequest) {
+
+export async function GET(request: Request) {
   try {
-    // Vérifier l'authentification
-    const { session, error } = await requireAuth()
-    if (error) return error
+    // Le middleware a ajouté le userId dans les headers après vérification du JWT
+    const userId = request.headers.get("x-user-id")
 
-    const userId = session.user.id
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Utilisateur non authentifié" },
+        { status: 401 }
+      )
+    }
 
-    // Récupérer toutes les données de l'utilisateur
+    // Récupérer TOUTES les données de l'utilisateur
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -30,7 +34,7 @@ export async function GET(request: NextRequest) {
             messages: true,
           },
         },
-        // Participation aux projets
+        // Participations aux projets
         projectMembers: {
           include: {
             project: true,
@@ -39,42 +43,43 @@ export async function GET(request: NextRequest) {
         // Documents uploadés
         documents: true,
         // Commentaires
-        comments: true,
-        // Messages
-        messages: true,
-        // Notifications
-        notifications: true,
-        // Abonnement
-        subscription: true,
-        // Paiements
-        payments: true,
-        // Factures
-        invoices: true,
-        // Logs d'audit
-        auditLogs: {
-          take: 100, // Limiter à 100 dernières actions
-          orderBy: {
-            createdAt: "desc",
+        comments: {
+          include: {
+            document: true,
           },
         },
+        // Messages
+        messages: {
+          include: {
+            project: true,
+          },
+        },
+        // Notifications
+        notifications: true,
+        // Abonnement et paiements
+        subscription: true,
+        payments: true,
+        invoices: true,
+        // Logs d'audit
+        auditLogs: true,
+        // Sessions
+        sessions: true,
       },
     })
 
     if (!user) {
-      return NextResponse.json(
-        { error: "Utilisateur non trouvé" },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: "Utilisateur non trouvé" }, { status: 404 })
     }
 
-    // Préparer les données à exporter (nettoyer les données sensibles)
+    // Anonymiser les données sensibles
     const exportData = {
       metadata: {
         exportDate: new Date().toISOString(),
-        exportType: "RGPD_FULL_DATA_EXPORT",
-        version: "1.0",
+        userId: user.id,
+        dataProtectionNotice:
+          "Conformément au RGPD (Article 15), ces données représentent l'ensemble des informations personnelles conservées par Companion.",
       },
-      profile: {
+      userData: {
         id: user.id,
         email: user.email,
         name: user.name,
@@ -86,67 +91,55 @@ export async function GET(request: NextRequest) {
         organization: user.organization,
         organizationSiret: user.organizationSiret,
         plan: user.plan,
+        twoFactorEnabled: user.twoFactorEnabled,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
         lastLoginAt: user.lastLoginAt,
       },
       projects: {
-        owned: user.ownedProjects.map((project) => ({
-          id: project.id,
-          name: project.name,
-          description: project.description,
-          status: project.status,
-          confidential: project.confidential,
-          createdAt: project.createdAt,
-          updatedAt: project.updatedAt,
-          documentsCount: project.documents.length,
-          membersCount: project.members.length,
-          messagesCount: project.messages.length,
+        owned: user.ownedProjects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          description: p.description,
+          status: p.status,
+          createdAt: p.createdAt,
+          documentsCount: p.documents.length,
+          membersCount: p.members.length,
+          messagesCount: p.messages.length,
         })),
-        member: user.projectMembers.map((member) => ({
-          projectId: member.projectId,
-          projectName: member.project.name,
-          role: member.role,
-          permissions: {
-            canEdit: member.canEdit,
-            canInvite: member.canInvite,
-            canDelete: member.canDelete,
-          },
-          joinedAt: member.invitedAt,
-          acceptedAt: member.acceptedAt,
+        memberOf: user.projectMembers.map((pm) => ({
+          projectId: pm.projectId,
+          projectName: pm.project.name,
+          role: pm.role,
+          joinedAt: pm.acceptedAt,
         })),
       },
-      documents: user.documents.map((doc) => ({
-        id: doc.id,
-        name: doc.name,
-        type: doc.type,
-        size: doc.size,
-        projectId: doc.projectId,
-        version: doc.version,
-        confidential: doc.confidential,
-        createdAt: doc.createdAt,
-        updatedAt: doc.updatedAt,
+      documents: user.documents.map((d) => ({
+        id: d.id,
+        name: d.name,
+        type: d.type,
+        size: d.size,
+        version: d.version,
+        uploadedAt: d.createdAt,
       })),
-      comments: user.comments.map((comment) => ({
-        id: comment.id,
-        content: comment.content,
-        documentId: comment.documentId,
-        createdAt: comment.createdAt,
-        updatedAt: comment.updatedAt,
+      comments: user.comments.map((c) => ({
+        id: c.id,
+        content: c.content,
+        documentId: c.documentId,
+        createdAt: c.createdAt,
       })),
-      messages: user.messages.map((message) => ({
-        id: message.id,
-        content: message.content,
-        projectId: message.projectId,
-        createdAt: message.createdAt,
+      messages: user.messages.map((m) => ({
+        id: m.id,
+        content: m.content,
+        projectId: m.projectId,
+        createdAt: m.createdAt,
       })),
-      notifications: user.notifications.map((notif) => ({
-        id: notif.id,
-        type: notif.type,
-        title: notif.title,
-        message: notif.message,
-        read: notif.read,
-        createdAt: notif.createdAt,
+      notifications: user.notifications.map((n) => ({
+        type: n.type,
+        title: n.title,
+        message: n.message,
+        read: n.read,
+        createdAt: n.createdAt,
       })),
       subscription: user.subscription
         ? {
@@ -154,69 +147,41 @@ export async function GET(request: NextRequest) {
             status: user.subscription.status,
             currentPeriodStart: user.subscription.currentPeriodStart,
             currentPeriodEnd: user.subscription.currentPeriodEnd,
-            cancelAtPeriodEnd: user.subscription.cancelAtPeriodEnd,
-            createdAt: user.subscription.createdAt,
           }
         : null,
-      payments: user.payments.map((payment) => ({
-        id: payment.id,
-        amount: payment.amount,
-        currency: payment.currency,
-        status: payment.status,
-        description: payment.description,
-        createdAt: payment.createdAt,
+      payments: user.payments.map((p) => ({
+        amount: p.amount / 100,
+        currency: p.currency,
+        status: p.status,
+        description: p.description,
+        date: p.createdAt,
       })),
-      invoices: user.invoices.map((invoice) => ({
-        id: invoice.id,
-        number: invoice.number,
-        amount: invoice.amount,
-        currency: invoice.currency,
-        status: invoice.status,
-        pdfUrl: invoice.pdfUrl,
-        paidAt: invoice.paidAt,
-        createdAt: invoice.createdAt,
+      invoices: user.invoices.map((i) => ({
+        number: i.number,
+        amount: i.amount / 100,
+        currency: i.currency,
+        status: i.status,
+        paidAt: i.paidAt,
       })),
-      auditLogs: user.auditLogs.map((log) => ({
+      activityLogs: user.auditLogs.slice(0, 100).map((log) => ({
         action: log.action,
         resource: log.resource,
-        resourceId: log.resourceId,
-        metadata: log.metadata,
         createdAt: log.createdAt,
       })),
-      statistics: {
-        totalProjects: user.ownedProjects.length,
-        totalDocuments: user.documents.length,
-        totalComments: user.comments.length,
-        totalMessages: user.messages.length,
-        totalNotifications: user.notifications.length,
-        totalPayments: user.payments.length,
-        accountAge: Math.floor(
-          (Date.now() - user.createdAt.getTime()) / (1000 * 60 * 60 * 24)
-        ),
-      },
     }
 
-    console.log(`✅ User data exported: ${user.email} (${user.id})`)
-
-    // Retourner les données au format JSON
+    // Retourner en JSON téléchargeable
     return new NextResponse(JSON.stringify(exportData, null, 2), {
+      status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Content-Disposition": `attachment; filename="companion-data-export-${user.email}-${new Date().toISOString().split("T")[0]}.json"`,
+        "Content-Disposition": `attachment; filename="companion-export-${userId}-${Date.now()}.json"`,
       },
     })
   } catch (error) {
-    console.error("Error exporting user data:", error)
-
-    if (error instanceof Error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
-    }
-
+    console.error("Erreur export données:", error)
     return NextResponse.json(
-      { error: "Failed to export user data" },
+      { error: "Erreur lors de l'export des données" },
       { status: 500 }
     )
   }

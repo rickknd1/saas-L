@@ -3,7 +3,6 @@
 
 generator client {
   provider        = "prisma-client-js"
-  previewFeatures = ["tracing"]
 }
 
 datasource db {
@@ -193,6 +192,7 @@ model ProjectMember {
   @@unique([projectId, userId])
   @@index([projectId])
   @@index([userId])
+  @@index([acceptedAt])
   @@map("project_members")
 }
 
@@ -207,8 +207,8 @@ model Document {
   name            String
   type            String   // pdf, docx, etc.
   size            Int      // en bytes
-  url             String   // S3 URL
-  key             String   // S3 Key
+  fileData        Bytes    // Contenu du fichier stocké directement en base
+  mimeType        String   // Type MIME (application/pdf, etc.)
 
   projectId       String
   uploadedById    String
@@ -230,6 +230,7 @@ model Document {
 
   @@index([projectId])
   @@index([uploadedById])
+  @@index([projectId, isCurrentVersion])
   @@map("documents")
 }
 
@@ -238,8 +239,8 @@ model DocumentVersion {
   documentId      String
   version         Int
   name            String
-  url             String
-  key             String
+  fileData        Bytes    // Contenu du fichier stocké directement en base
+  mimeType        String   // Type MIME
   size            Int
   uploadedById    String
 
@@ -300,6 +301,7 @@ model Message {
 
   @@index([projectId])
   @@index([userId])
+  @@index([projectId, read])
   @@map("messages")
 }
 
@@ -358,6 +360,8 @@ model Subscription {
 
   @@index([userId])
   @@index([stripeSubscriptionId])
+  @@index([status])
+  @@index([userId, status])
   @@map("subscriptions")
 }
 
@@ -437,7 +441,7 @@ model AuditLog {
   projectId   String?
   documentId  String?
 
-  metadata    String?  // JSON avec détails supplémentaires
+  metadata    Json?    // JSON avec détails supplémentaires
   ipAddress   String?
   userAgent   String?
 

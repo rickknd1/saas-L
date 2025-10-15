@@ -5,12 +5,16 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { CheckCircle2, ArrowRight, Download, Calendar } from "lucide-react"
 import Link from "next/link"
-import { setUserPlan } from "@/lib/plan-manager"
+import { useAuth } from "@/hooks/use-auth"
 
 export default function CheckoutSuccessPage() {
+  const { refetchUser } = useAuth()
+
   useEffect(() => {
-    setUserPlan("standard")
-  }, [])
+    // Simple refetch pour synchroniser les données après paiement
+    // Le webhook Stripe a déjà mis à jour la BDD instantanément
+    refetchUser()
+  }, [refetchUser])
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -25,7 +29,7 @@ export default function CheckoutSuccessPage() {
         {/* Success Message */}
         <div className="text-center space-y-2">
           <h1 className="text-4xl font-bold">Bienvenue dans Companion Standard !</h1>
-          <p className="text-xl text-muted-foreground">Votre essai gratuit de 14 jours a commencé</p>
+          <p className="text-xl text-muted-foreground">Votre abonnement a été activé avec succès</p>
         </div>
 
         {/* Details Card */}
@@ -42,15 +46,15 @@ export default function CheckoutSuccessPage() {
               </div>
               <div className="space-y-1">
                 <div className="text-sm text-muted-foreground">Prix</div>
-                <div className="font-semibold">23€/mois (après l'essai)</div>
+                <div className="font-semibold">23€/mois</div>
               </div>
               <div className="space-y-1">
-                <div className="text-sm text-muted-foreground">Période d'essai</div>
-                <div className="font-semibold">14 jours gratuits</div>
+                <div className="text-sm text-muted-foreground">Facturation</div>
+                <div className="font-semibold">Mensuelle</div>
               </div>
               <div className="space-y-1">
-                <div className="text-sm text-muted-foreground">Première facturation</div>
-                <div className="font-semibold">22 janvier 2025</div>
+                <div className="text-sm text-muted-foreground">Premier paiement</div>
+                <div className="font-semibold">Effectué</div>
               </div>
             </div>
 
@@ -58,10 +62,10 @@ export default function CheckoutSuccessPage() {
               <div className="flex items-start gap-3">
                 <Calendar className="h-5 w-5 text-accent shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <div className="text-sm font-medium">Rappel important</div>
+                  <div className="text-sm font-medium">Gestion de l'abonnement</div>
                   <div className="text-sm text-muted-foreground">
-                    Vous recevrez un email 3 jours avant la fin de votre période d'essai. Vous pouvez annuler à tout
-                    moment depuis vos paramètres.
+                    Vous pouvez gérer votre abonnement, modifier votre carte bancaire ou annuler à tout moment depuis vos paramètres.
+                    En cas d'annulation, vous conservez l'accès jusqu'à la fin de la période payée.
                   </div>
                 </div>
               </div>

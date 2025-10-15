@@ -16,62 +16,34 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import { Search, UserPlus, Mail, MoreVertical, Shield, Crown, User } from "lucide-react"
+import { Search, UserPlus, MoreVertical, Shield, Crown, User } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { useAuth } from "@/hooks/use-auth"
+import { useMembers, useMemberStats } from "@/hooks/use-members"
 
 export default function MembersPage() {
-  const members = [
-    {
-      id: 1,
-      name: "Jean Dupont",
-      email: "jean.dupont@cabinet.fr",
-      role: "Propriétaire",
-      status: "Actif",
-      projects: 12,
-      lastActive: "En ligne",
-      icon: Crown,
-    },
-    {
-      id: 2,
-      name: "Marie Martin",
-      email: "marie.martin@cabinet.fr",
-      role: "Administrateur",
-      status: "Actif",
-      projects: 8,
-      lastActive: "Il y a 5 min",
-      icon: Shield,
-    },
-    {
-      id: 3,
-      name: "Pierre Dubois",
-      email: "pierre.dubois@cabinet.fr",
-      role: "Membre",
-      status: "Actif",
-      projects: 6,
-      lastActive: "Il y a 2 heures",
-      icon: User,
-    },
-    {
-      id: 4,
-      name: "Sophie Laurent",
-      email: "sophie.laurent@cabinet.fr",
-      role: "Membre",
-      status: "Actif",
-      projects: 4,
-      lastActive: "Hier",
-      icon: User,
-    },
-    {
-      id: 5,
-      name: "Thomas Bernard",
-      email: "thomas.bernard@cabinet.fr",
-      role: "Membre",
-      status: "Invité",
-      projects: 0,
-      lastActive: "Invitation envoyée",
-      icon: User,
-    },
-  ]
+  const { userId } = useAuth()
+  const { members, isLoading } = useMembers(userId)
+  const { stats, isLoading: statsLoading } = useMemberStats(userId)
+
+  const getRoleIcon = (role: string) => {
+    if (role === "OWNER") return Crown
+    if (role === "EDITOR") return Shield
+    return User
+  }
+
+  const getRoleName = (role: string) => {
+    const roleMap: Record<string, string> = {
+      OWNER: "Propriétaire",
+      EDITOR: "Éditeur",
+      VIEWER: "Membre",
+    }
+    return roleMap[role] || role
+  }
+
+  if (isLoading || statsLoading) {
+    return <div className="space-y-6">Chargement...</div>
+  }
 
   return (
     <div className="space-y-6">
@@ -128,18 +100,8 @@ export default function MembersPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Total des membres</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">8</div>
-            <p className="text-xs text-muted-foreground mt-1">4 actifs, 1 invitation en attente</p>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Administrateurs</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">2</div>
-            <p className="text-xs text-muted-foreground mt-1">Accès complet à l'organisation</p>
+            <div className="text-3xl font-bold">{stats.total || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">{stats.active || 0} actifs, {stats.pendingInvitations || 0} invitation(s) en attente</p>
           </CardContent>
         </Card>
 
@@ -148,8 +110,18 @@ export default function MembersPage() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Membres actifs</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">6</div>
-            <p className="text-xs text-muted-foreground mt-1">Connectés ce mois-ci</p>
+            <div className="text-3xl font-bold">{stats.active || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Connectés récemment</p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total projets</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold">{stats.totalProjects || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Projets collaboratifs</p>
           </CardContent>
         </Card>
       </div>
@@ -177,97 +149,70 @@ export default function MembersPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {members.map((member) => {
-              const RoleIcon = member.icon
-              return (
-                <div
-                  key={member.id}
-                  className="flex items-center justify-between rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <Avatar className="h-12 w-12">
-                      <AvatarFallback className="bg-primary/10 text-primary">
-                        {member.name
-                          .split(" ")
-                          .map((n) => n[0])
-                          .join("")}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-medium">{member.name}</p>
-                        <Badge
-                          variant="secondary"
-                          className={
-                            member.status === "Invité"
-                              ? "bg-amber-500/10 text-amber-600"
-                              : "bg-green-500/10 text-green-600"
-                          }
-                        >
-                          {member.status}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-muted-foreground">{member.email}</p>
-                      <div className="flex items-center gap-4 mt-1">
-                        <p className="text-xs text-muted-foreground">{member.projects} projets</p>
-                        <p className="text-xs text-muted-foreground">• {member.lastActive}</p>
+            {members.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">Aucun membre trouvé</div>
+            ) : (
+              members.map((member) => {
+                const RoleIcon = getRoleIcon(member.role)
+                return (
+                  <div
+                    key={member.id}
+                    className="flex items-center justify-between rounded-lg border border-border p-4 hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-4">
+                      <Avatar className="h-12 w-12">
+                        <AvatarFallback className="bg-primary/10 text-primary">
+                          {member.user.name
+                            ? member.user.name.split(" ").map((n) => n[0]).join("")
+                            : member.user.email[0].toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">
+                            {member.userId === userId ? "Vous" : (member.user.name || member.user.email)}
+                          </p>
+                          <Badge
+                            variant="secondary"
+                            className={
+                              member.acceptedAt
+                                ? "bg-green-500/10 text-green-600"
+                                : "bg-amber-500/10 text-amber-600"
+                            }
+                          >
+                            {member.acceptedAt ? "Actif" : "Invité"}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-muted-foreground">{member.user.email}</p>
+                        <div className="flex items-center gap-4 mt-1">
+                          <p className="text-xs text-muted-foreground">{member.projectCount || 0} projets</p>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted">
-                      <RoleIcon className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">{member.role}</span>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted">
+                        <RoleIcon className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm font-medium">{getRoleName(member.role)}</span>
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem>Modifier le rôle</DropdownMenuItem>
+                          <DropdownMenuItem>Voir le profil</DropdownMenuItem>
+                          <DropdownMenuItem>Envoyer un message</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive">Retirer</DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>Modifier le rôle</DropdownMenuItem>
-                        <DropdownMenuItem>Voir le profil</DropdownMenuItem>
-                        <DropdownMenuItem>Envoyer un message</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">Retirer</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
                   </div>
-                </div>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pending Invitations */}
-      <Card className="border-border">
-        <CardHeader>
-          <CardTitle>Invitations en attente</CardTitle>
-          <CardDescription>Invitations envoyées en attente d'acceptation</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between rounded-lg border border-border p-4">
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                  <Mail className="h-5 w-5 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="font-medium">thomas.bernard@cabinet.fr</p>
-                  <p className="text-sm text-muted-foreground">Invité en tant que Membre • Il y a 2 jours</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  Renvoyer
-                </Button>
-                <Button variant="ghost" size="sm">
-                  Annuler
-                </Button>
-              </div>
-            </div>
+                )
+              })
+            )}
           </div>
         </CardContent>
       </Card>

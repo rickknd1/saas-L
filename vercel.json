@@ -1,6 +1,25 @@
 {
-  "buildCommand": "npx prisma generate && next build",
-  "installCommand": "npm install --legacy-peer-deps",
+  "version": 2,
+  "buildCommand": "pnpm prisma generate && pnpm build",
+  "installCommand": "pnpm install",
   "framework": "nextjs",
-  "regions": ["fra1"]
+  "regions": ["cdg1"],
+  "functions": {
+    "app/api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "DATABASE_URL": "@database-url",
+    "JWT_SECRET": "@jwt-secret",
+    "STRIPE_SECRET_KEY": "@stripe-secret-key",
+    "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY": "@stripe-publishable-key",
+    "STRIPE_WEBHOOK_SECRET": "@stripe-webhook-secret",
+    "STRIPE_PRICE_ID_STANDARD": "@stripe-price-id-standard"
+  },
+  "build": {
+    "env": {
+      "DATABASE_URL": "@database-url"
+    }
+  }
 }

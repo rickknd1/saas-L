@@ -1,61 +1,23 @@
-"use client"
-
 import Link from "next/link"
-import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Check, Loader2 } from "lucide-react"
-import { toast } from "sonner"
-
-/**
- * Page de tarification
- * Module C (@kayzeur dylann)
- *
- * Affiche les plans Freemium et Standard avec intégration Stripe
- */
+import { Check } from "lucide-react"
 
 export default function PricingPage() {
-  const [isLoading, setIsLoading] = useState(false)
-
-  const handleSubscribe = async () => {
-    setIsLoading(true)
-    try {
-      const response = await fetch("/api/billing/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || "Erreur lors de la création de la session")
-      }
-
-      // Rediriger vers Stripe Checkout
-      if (data.url) {
-        window.location.href = data.url
-      }
-    } catch (error) {
-      console.error("Checkout error:", error)
-      toast.error("Erreur lors de la redirection vers le paiement")
-      setIsLoading(false)
-    }
-  }
-
   const plans = [
     {
       name: "Freemium",
       price: "0",
       description: "Pour découvrir Companion et ses fonctionnalités de base",
       features: [
-        "1 projet maximum",
-        "5 documents par projet",
-        "Collaboration basique",
+        "1 projet actif",
+        "Jusqu'à 3 collaborateurs",
+        "5 Go de stockage",
+        "Comparaison de documents basique",
+        "Historique de 30 jours",
         "Support par email",
-        "Stockage 1 Go",
       ],
       cta: "Commencer gratuitement",
-      action: "link",
       href: "/register",
       popular: false,
     },
@@ -65,18 +27,18 @@ export default function PricingPage() {
       description: "Pour les cabinets et équipes juridiques professionnels",
       features: [
         "Projets illimités",
-        "Documents illimités",
-        "Comparaison de versions",
-        "Collaboration complète",
-        "Annotations et commentaires",
-        "Gestion des rôles (RBAC)",
-        "Chat temps réel",
-        "Support prioritaire 24/7",
-        "Stockage 100 Go",
+        "Collaborateurs illimités",
+        "100 Go de stockage",
+        "Comparaison avancée avec IA",
         "Historique illimité",
+        "Annotations et commentaires",
+        "Gestion des rôles et permissions",
+        "Intégrations tierces",
+        "Support prioritaire 24/7",
+        "Formation personnalisée",
       ],
-      cta: "S'abonner maintenant",
-      action: "checkout",
+      cta: "Essayer 14 jours gratuits",
+      href: "/dashboard/upgrade",
       popular: true,
     },
   ]
@@ -142,28 +104,9 @@ export default function PricingPage() {
                   </ul>
                 </CardContent>
                 <CardFooter>
-                  {plan.action === "link" ? (
-                    <Button asChild className="w-full" variant="outline" size="lg">
-                      <Link href={plan.href!}>{plan.cta}</Link>
-                    </Button>
-                  ) : (
-                    <Button
-                      className="w-full"
-                      variant="default"
-                      size="lg"
-                      onClick={handleSubscribe}
-                      disabled={isLoading}
-                    >
-                      {isLoading ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Redirection...
-                        </>
-                      ) : (
-                        plan.cta
-                      )}
-                    </Button>
-                  )}
+                  <Button asChild className="w-full" variant={plan.popular ? "default" : "outline"} size="lg">
+                    <Link href={plan.href}>{plan.cta}</Link>
+                  </Button>
                 </CardFooter>
               </Card>
             ))}

@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
-import { Bell, Check, Shield, Users, FileText, AlertTriangle } from "lucide-react"
+import { useEffect, useState } from "react"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { Bell, Check, Shield, Users, FileText, AlertTriangle, Mail, MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -13,75 +14,40 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
-
-type NotificationType = "security" | "activity" | "system" | "team"
+import Link from "next/link"
 
 interface Notification {
   id: string
-  type: NotificationType
+  type: string
   title: string
-  description: string
-  timestamp: Date
+  message: string
+  createdAt: string
   read: boolean
-  actions?: Array<{
-    label: string
-    onClick: () => void
-  }>
+  link?: string | null
 }
 
-const notificationIcons = {
-  security: Shield,
-  activity: FileText,
-  system: AlertTriangle,
-  team: Users,
+const getNotificationIcon = (type: string) => {
+  switch (type) {
+    case "COMMENT":
+    case "MENTION":
+      return MessageSquare
+    case "DOCUMENT_UPDATED":
+      return FileText
+    case "PROJECT_SHARED":
+      return Mail
+    case "TEAM_MEMBER_ADDED":
+      return Users
+    case "SYSTEM":
+      return Bell
+    default:
+      return Bell
+  }
 }
 
-const notificationColors = {
-  security: "text-destructive",
-  activity: "text-primary",
-  system: "text-yellow-500",
-  team: "text-blue-500",
-}
-
-// Mock notifications - En production, ces données viendraient d'une API
-const mockNotifications: Notification[] = [
-  {
-    id: "1",
-    type: "security",
-    title: "Nouvelle connexion détectée",
-    description: "Chrome sur Windows • Paris, France",
-    timestamp: new Date(Date.now() - 5 * 60 * 1000),
-    read: false,
-  },
-  {
-    id: "2",
-    type: "activity",
-    title: "Document consulté",
-    description: 'Marie Dubois a ouvert "Contrat ABC.pdf"',
-    timestamp: new Date(Date.now() - 15 * 60 * 1000),
-    read: false,
-  },
-  {
-    id: "3",
-    type: "team",
-    title: "Nouveau membre",
-    description: "Thomas Dubois a rejoint votre équipe",
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    read: true,
-  },
-  {
-    id: "4",
-    type: "system",
-    title: "Limite de projets atteinte",
-    description: "Vous avez utilisé 5/5 projets disponibles",
-    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    read: true,
-  },
-]
-
-function formatTimestamp(date: Date): string {
+function formatTimestamp(date: string): string {
   const now = new Date()
-  const diff = now.getTime() - date.getTime()
+  const timestamp = new Date(date)
+  const diff = now.getTime() - timestamp.getTime()
   const minutes = Math.floor(diff / 60000)
   const hours = Math.floor(diff / 3600000)
   const days = Math.floor(diff / 86400000)
@@ -93,45 +59,93 @@ function formatTimestamp(date: Date): string {
 }
 
 export function NotificationBell() {
-  const [notifications, setNotifications] = useState<Notification[]>(mockNotifications)
+  const queryClient = useQueryClient()
+  const [mounted, setMounted] = useState(false)
 
+  // S'assurer que le composant est monté côté client
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  // Charger les notifications réelles depuis l'API
+  const { data: notificationsData } = useQuery({
+    queryKey: ["notifications"],
+    queryFn: async () => {
+      const res = await fetch("/api/notifications", {
+        credentials: "include",
+      })
+      if (!res.ok) return { notifications: [] }
+      return res.json()
+    },
+    refetchInterval: 30000, // Rafraîchir toutes les 30 secondes
+    enabled: mounted, // Attendre que le composant soit monté
+  })
+
+  // Charger les invitations en attente
+  const { data: invitationsData } = useQuery({
+    queryKey: ["invitations"],
+    queryFn: async () => {
+      const res = await fetch("/api/invitations", {
+        credentials: "include",
+      })
+      if (!res.ok) return { invitations: [] }
+      return res.json()
+    },
+    refetchInterval: 30000,
+    enabled: mounted, // Attendre que le composant soit monté
+  })
+
+  const notifications: Notification[] = notificationsData?.notifications || []
+  const invitationsCount = invitationsData?.invitations?.length || 0
   const unreadCount = notifications.filter((n) => !n.read).length
+  const totalBadgeCount = unreadCount + invitationsCount
 
-  const markAsRead = (id: string) => {
-    setNotifications((prev) =>
-      prev.map((notif) =>
-        notif.id === id ? { ...notif, read: true } : notif
-      )
-    )
-  }
-
-  const markAllAsRead = () => {
-    setNotifications((prev) =>
-      prev.map((notif) => ({ ...notif, read: true }))
-    )
-  }
+  const markAllAsRead = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/notifications/mark-all-read", {
+        method: "POST",
+        credentials: "include",
+      })
+      if (!res.ok) throw new Error("Erreur")
+      return res.json()
+    },
+    onSuccess: () => {
+      // Rafraîchir les deux queries
+      queryClient.invalidateQueries({ queryKey: ["notifications"] })
+      queryClient.invalidateQueries({ queryKey: ["invitations"] })
+    },
+  })
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        <Button variant="ghost" size="icon" className="relative" suppressHydrationWarning>
           <Bell className="h-5 w-5" />
-          {unreadCount > 0 && (
+          {mounted && totalBadgeCount > 0 && (
             <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-destructive-foreground">
-              {unreadCount}
+              {totalBadgeCount}
             </span>
           )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-[380px]">
         <DropdownMenuLabel className="flex items-center justify-between">
-          <span>Notifications</span>
-          {unreadCount > 0 && (
+          <div className="flex items-center gap-2">
+            <span>Notifications</span>
+            {mounted && unreadCount > 0 && (
+              <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                {unreadCount}
+              </Badge>
+            )}
+          </div>
+          {mounted && unreadCount > 0 && (
             <Button
               variant="ghost"
               size="sm"
-              onClick={markAllAsRead}
+              onClick={() => markAllAsRead.mutate()}
+              disabled={markAllAsRead.isPending}
               className="h-auto p-0 text-xs text-primary hover:bg-transparent"
+              suppressHydrationWarning
             >
               Tout marquer comme lu
             </Button>
@@ -139,7 +153,26 @@ export function NotificationBell() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <ScrollArea className="h-[400px]">
-          {notifications.length === 0 ? (
+          {mounted && invitationsCount > 0 && (
+            <div className="p-2 pb-0">
+              <Link href="/dashboard/notifications">
+                <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/10 hover:bg-primary/20 cursor-pointer">
+                  <Mail className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium text-primary">
+                    {invitationsCount} invitation{invitationsCount > 1 ? 's' : ''} en attente
+                  </span>
+                </div>
+              </Link>
+            </div>
+          )}
+          {!mounted ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <Bell className="h-12 w-12 text-muted-foreground/50" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                Chargement...
+              </p>
+            </div>
+          ) : notifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <Bell className="h-12 w-12 text-muted-foreground/50" />
               <p className="mt-2 text-sm text-muted-foreground">
@@ -147,50 +180,61 @@ export function NotificationBell() {
               </p>
             </div>
           ) : (
-            <div className="space-y-1">
-              {notifications.map((notification) => {
-                const Icon = notificationIcons[notification.type]
-                const iconColor = notificationColors[notification.type]
+            <div className="space-y-1 p-1">
+              {notifications.length > 5 && (
+                <div className="px-3 py-2 text-xs text-muted-foreground">
+                  Affichage des 5 dernières sur {notifications.length} notifications
+                </div>
+              )}
+              {notifications.slice(0, 5).map((notification) => {
+                const Icon = getNotificationIcon(notification.type)
 
                 return (
-                  <DropdownMenuItem
+                  <Link
                     key={notification.id}
-                    className={`flex cursor-pointer gap-3 p-3 ${
-                      !notification.read ? "bg-muted/50" : ""
-                    }`}
-                    onClick={() => markAsRead(notification.id)}
+                    href={notification.link || "/dashboard/notifications"}
                   >
-                    <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted`}>
-                      <Icon className={`h-4 w-4 ${iconColor}`} />
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-medium leading-tight">
-                          {notification.title}
-                        </p>
-                        {!notification.read && (
-                          <Badge variant="default" className="h-2 w-2 rounded-full p-0 bg-primary" />
-                        )}
+                    <DropdownMenuItem
+                      className={`flex cursor-pointer gap-3 p-3 ${
+                        !notification.read ? "bg-muted/50" : ""
+                      }`}
+                    >
+                      <div className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                        !notification.read ? "bg-primary/10" : "bg-muted"
+                      }`}>
+                        <Icon className={`h-4 w-4 ${!notification.read ? "text-primary" : "text-muted-foreground"}`} />
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {notification.description}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatTimestamp(notification.timestamp)}
-                      </p>
-                    </div>
-                  </DropdownMenuItem>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-sm font-medium leading-tight">
+                            {notification.title}
+                          </p>
+                          {!notification.read && (
+                            <Badge variant="default" className="h-2 w-2 rounded-full p-0 bg-primary" />
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground line-clamp-2">
+                          {notification.message}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatTimestamp(notification.createdAt)}
+                        </p>
+                      </div>
+                    </DropdownMenuItem>
+                  </Link>
                 )
               })}
             </div>
           )}
         </ScrollArea>
-        {notifications.length > 0 && (
+        {mounted && (notifications.length > 0 || invitationsCount > 0) && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="justify-center text-center text-sm text-primary">
-              Voir toutes les notifications
-            </DropdownMenuItem>
+            <Link href="/dashboard/notifications">
+              <DropdownMenuItem className="justify-center text-center text-sm text-primary cursor-pointer">
+                Voir toutes les notifications
+              </DropdownMenuItem>
+            </Link>
           </>
         )}
       </DropdownMenuContent>

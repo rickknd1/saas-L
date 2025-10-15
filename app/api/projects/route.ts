@@ -1,38 +1,77 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { PLAN_LIMITS } from "@/lib/plan-manager"
-import { requireAuth } from "@/lib/get-session"
+
+
 
 /**
- * API de gestion des projets
- * GET /api/projects - Liste des projets
- * POST /api/projects - Création de projet
+ * API pour récupérer la liste des projets de l'utilisateur
+ * Retourne tous les projets avec leurs statistiques
  *
- * Module C (@kayzeur dylann)
- * Implémente la limitation freemium (1 projet max)
+ * Cahier des charges: Module A - Projets & Documents
  */
 
-/**
- * GET /api/projects
- * Récupère la liste des projets de l'utilisateur
- */
-export async function GET(request: NextRequest) {
+export async function GET(request: Request) {
   try {
-    // Vérifier l'authentification
-    const { session, error } = await requireAuth()
-    if (error) return error
+    // Le middleware a ajouté le userId dans les headers après vérification du JWT
+    const userId = request.headers.get("x-user-id")
 
-    const userId = session.user.id
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Non authentifié" },
+        { status: 401 }
+      )
+    }
 
+    // Récupérer les projets de l'utilisateur avec leurs relations
     const projects = await prisma.project.findMany({
       where: {
-        ownerId: userId,
+        OR: [
+          { ownerId: userId },
+          {
+            members: {
+              some: {
+                userId: userId,
+                acceptedAt: {
+                  not: null,  // Uniquement si l'utilisateur a accepté l'invitation
+                },
+              },
+            },
+          },
+        ],
       },
       include: {
+        owner: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+        members: {
+          where: {
+            acceptedAt: {
+              not: null,  // Uniquement les membres qui ont accepté
+            },
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+        documents: {
+          select: {
+            id: true,
+          },
+        },
         _count: {
           select: {
-            documents: true,
             members: true,
+            documents: true,
           },
         },
       },
@@ -41,86 +80,66 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    // Corriger manuellement le _count.members pour chaque projet (car _count ne respecte pas le where)
+    const projectsWithCorrectCount = projects.map(project => ({
+      ...project,
+      _count: {
+        ...project._count,
+        members: project.members.length,
+      },
+    }))
+
     return NextResponse.json({
-      projects,
-      count: projects.length,
+      success: true,
+      projects: projectsWithCorrectCount,
     })
   } catch (error) {
-    console.error("Error fetching projects:", error)
+    console.error("Erreur lors de la récupération des projets:", error)
     return NextResponse.json(
-      { error: "Failed to fetch projects" },
+      { error: "Erreur lors de la récupération des projets" },
       { status: 500 }
     )
+  } finally {
+    // Ne PAS déconnecter Prisma - laissez le pool gérer les connexions
+
+    // await prisma.$disconnect()
   }
 }
 
 /**
- * POST /api/projects
- * Crée un nouveau projet avec vérification de la limitation freemium
+ * API pour créer un nouveau projet
  */
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
-    // Vérifier l'authentification
-    const { session, error } = await requireAuth()
-    if (error) return error
+    // Le middleware a ajouté le userId dans les headers après vérification du JWT
+    const userId = request.headers.get("x-user-id")
 
-    const userId = session.user.id
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Non authentifié" },
+        { status: 401 }
+      )
+    }
 
     const body = await request.json()
-    const { name, description, type, client, confidential } = body
+    const { name, description, status, priority, confidential, deadline } = body
 
-    // Validation
-    if (!name?.trim()) {
+    if (!name) {
       return NextResponse.json(
-        { error: "Le nom du projet est requis" },
+        { error: "name est requis" },
         { status: 400 }
       )
     }
 
-    // Récupérer l'utilisateur et son plan
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { id: true, plan: true },
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: "Utilisateur non trouvé" },
-        { status: 404 }
-      )
-    }
-
-    // Vérifier la limitation freemium (1 projet max)
-    if (user.plan === "FREEMIUM") {
-      const projectCount = await prisma.project.count({
-        where: { ownerId: userId },
-      })
-
-      const limit = PLAN_LIMITS.freemium.projects
-
-      if (projectCount >= limit) {
-        return NextResponse.json(
-          {
-            error: "Limite de projets atteinte",
-            message: `Vous avez atteint la limite de ${limit} projet${limit > 1 ? "s" : ""} pour le plan Freemium. Passez au plan Standard pour créer des projets illimités.`,
-            code: "FREEMIUM_LIMIT_REACHED",
-            limit,
-            current: projectCount,
-            upgradeUrl: "/pricing",
-          },
-          { status: 403 }
-        )
-      }
-    }
-
-    // Créer le projet
     const project = await prisma.project.create({
       data: {
-        name: name.trim(),
-        description: description?.trim() || null,
-        ownerId: userId,
+        name,
+        description,
+        status: status || "DRAFT",
+        priority: priority || "MEDIUM",
         confidential: confidential || false,
-        // Stocker le type de contrat dans les métadonnées si nécessaire
+        deadline: deadline ? new Date(deadline) : null,
+        ownerId: userId,
       },
       include: {
         owner: {
@@ -132,35 +151,26 @@ export async function POST(request: NextRequest) {
         },
         _count: {
           select: {
-            documents: true,
             members: true,
+            documents: true,
           },
         },
       },
     })
 
-    console.log(`✅ Project created: ${project.name} (${project.id}) by user ${userId}`)
-
-    return NextResponse.json(
-      {
-        project,
-        message: "Projet créé avec succès",
-      },
-      { status: 201 }
-    )
+    return NextResponse.json({
+      success: true,
+      project,
+    })
   } catch (error) {
-    console.error("Error creating project:", error)
-
-    if (error instanceof Error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
-    }
-
+    console.error("Erreur lors de la création du projet:", error)
     return NextResponse.json(
-      { error: "Failed to create project" },
+      { error: "Erreur lors de la création du projet" },
       { status: 500 }
     )
+  } finally {
+    // Ne PAS déconnecter Prisma - laissez le pool gérer les connexions
+
+    // await prisma.$disconnect()
   }
 }

@@ -10,93 +10,78 @@ import Link from "next/link"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useUserPlan } from "@/hooks/use-user-plan"
-import { PLAN_LIMITS } from "@/lib/plan-manager"
+import { useAuth } from "@/hooks/use-auth"
+import { useProjects } from "@/hooks/use-projects"
 import { useState } from "react"
 import { toast } from "sonner"
 import { SecurityModal } from "@/components/security/security-modal"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
-
-const projects = [
-  {
-    id: 1,
-    name: "Contrat de fusion ABC Corp",
-    description: "Révision et négociation du contrat de fusion",
-    status: "En révision",
-    members: 2,
-    documents: 12,
-    lastUpdate: "Il y a 2 heures",
-    dueDate: "15 Jan 2025",
-    confidential: true,
-  },
-  {
-    id: 2,
-    name: "Accord de confidentialité XYZ",
-    description: "NDA pour partenariat stratégique",
-    status: "En attente",
-    members: 1,
-    documents: 5,
-    lastUpdate: "Il y a 5 heures",
-    dueDate: "20 Jan 2025",
-    confidential: true,
-  },
-  {
-    id: 3,
-    name: "Bail commercial - Paris 8ème",
-    description: "Contrat de location commerciale",
-    status: "Finalisé",
-    members: 2,
-    documents: 8,
-    lastUpdate: "Hier",
-    dueDate: "10 Jan 2025",
-    confidential: false,
-  },
-]
+import { InviteMemberDialog } from "@/components/projects/invite-member-dialog"
+import { useQueryClient } from "@tanstack/react-query"
+import { UpgradeDialog } from "@/components/billing/upgrade-dialog"
+import { useRouter } from "next/navigation"
+import { PLAN_LIMITS } from "@/lib/plan-manager"
 
 export default function ProjectsPage() {
-  const { isFreemium, isLoading } = useUserPlan()
-  const projectCount = projects.length
-  const projectLimit = isFreemium ? PLAN_LIMITS.freemium.projects : PLAN_LIMITS.standard.projects
+  const router = useRouter()
+  const queryClient = useQueryClient()
+  const { userId } = useAuth()
+  const { plan, isFreemium, isLoading: planLoading } = useUserPlan()
+  const { projects, isLoading: projectsLoading } = useProjects(userId)
 
-  const [showShareModal, setShowShareModal] = useState(false)
+  const projectCount = projects.length
+  const projectLimit = PLAN_LIMITS[plan].projects
+  const isLoading = planLoading || projectsLoading
+  const hasReachedLimit = isFreemium && projectCount >= projectLimit
+
+  const formatTimeAgo = (dateString: string) => {
+    const now = new Date()
+    const date = new Date(dateString)
+    const diffMs = now.getTime() - date.getTime()
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+    if (diffHours < 1) return "Il y a quelques minutes"
+    if (diffHours < 24) return `Il y a ${diffHours} heure${diffHours > 1 ? "s" : ""}`
+    if (diffDays < 2) return "Hier"
+    return `Il y a ${diffDays} jours`
+  }
+
+  const getStatusLabel = (status: string) => {
+    const statusMap: Record<string, string> = {
+      DRAFT: "Brouillon",
+      IN_REVIEW: "En révision",
+      PENDING: "En attente",
+      COMPLETED: "Finalisé",
+      ARCHIVED: "Archivé",
+    }
+    return statusMap[status] || status
+  }
+
+  const [showInviteDialog, setShowInviteDialog] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [showMembersModal, setShowMembersModal] = useState(false)
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false)
   const [selectedProject, setSelectedProject] = useState<any>(null)
-  const [shareEmail, setShareEmail] = useState("")
-  const [shareSettings, setShareSettings] = useState({
-    canEdit: false,
-    canInvite: false,
-    canDelete: false,
-  })
+
+  const handleNewProject = () => {
+    if (hasReachedLimit) {
+      setShowUpgradeDialog(true)
+    } else {
+      router.push("/dashboard/projects/new")
+    }
+  }
 
   const handleShareProject = (project: any) => {
     setSelectedProject(project)
-    setShowShareModal(true)
+    setShowInviteDialog(true)
   }
 
-  const handleShareConfirm = () => {
-    if (!shareEmail) {
-      toast.error("Email requis", {
-        description: "Veuillez entrer l'adresse email du membre à inviter.",
-      })
-      return
-    }
-
-    setShowShareModal(false)
-    toast.success("Invitation envoyée", {
-      description: `Une invitation a été envoyée à ${shareEmail} pour rejoindre "${selectedProject?.name}".`,
-      duration: 5000,
-    })
-
-    setTimeout(() => {
-      toast.info("Notification envoyée", {
-        description: "Le nouveau membre recevra un email avec les instructions d'accès.",
-      })
-    }, 1500)
-
-    setShareEmail("")
-    setShareSettings({ canEdit: false, canInvite: false, canDelete: false })
+  const handleInviteSuccess = () => {
+    setShowInviteDialog(false)
+    queryClient.invalidateQueries({ queryKey: ["projects"] })
   }
 
   const handleDeleteProject = (project: any) => {
@@ -131,33 +116,39 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="relative min-h-screen p-6">
+      {/* Gradient Mesh Background */}
+      <div className="gradient-mesh fixed inset-0 -z-10" />
+
+      {/* Header */}
+      <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Projets</h1>
-          <p className="text-muted-foreground">Gérez tous vos dossiers juridiques</p>
+          <h1 className="font-serif text-5xl font-bold mb-2 text-foreground">
+            Projets
+          </h1>
+          <p className="text-muted-foreground text-lg">Gérez tous vos dossiers juridiques</p>
         </div>
-        <Button className="bg-primary text-primary-foreground hover:bg-primary/90" asChild>
-          <Link href="/dashboard/projects/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Nouveau projet
-          </Link>
+        <Button
+          onClick={handleNewProject}
+        >
+          <Plus className="mr-2 h-4 w-4" />
+          Nouveau projet
         </Button>
       </div>
 
       {isFreemium && projectCount >= projectLimit - 1 && (
-        <Alert className="border-accent/50 bg-accent/5">
+        <Alert className="border-accent/50 bg-accent/5 glass mb-6">
           <AlertCircle className="h-4 w-4 text-accent" />
           <AlertDescription className="flex items-center justify-between">
             <span>
               Vous utilisez{" "}
               <strong>
-                {projectCount}/{projectLimit} projet{projectLimit > 1 ? "s" : ""}
+                {projectCount}/{projectLimit} projets
               </strong>
               . Passez au plan Standard pour des projets illimités.
             </span>
-            <Button variant="outline" size="sm" className="ml-4 shrink-0 bg-transparent" asChild>
-              <Link href="/pricing">
+            <Button variant="outline" size="sm" className="ml-4 shrink-0 glass hover-lift" asChild>
+              <Link href="/dashboard/upgrade">
                 <Sparkles className="mr-2 h-3 w-3" />
                 Passer au Standard
               </Link>
@@ -167,18 +158,18 @@ export default function ProjectsPage() {
       )}
 
       {/* Filters */}
-      <Card className="border-border">
+      <Card className="card-premium mb-6">
         <CardContent className="pt-6">
           <div className="flex flex-col gap-4 md:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input type="search" placeholder="Rechercher un projet..." className="pl-9" />
+              <Input type="search" placeholder="Rechercher un projet..." className="pl-9 glass border-glow" />
             </div>
             <Select defaultValue="all">
-              <SelectTrigger className="w-full md:w-48">
+              <SelectTrigger className="w-full md:w-48 glass border-glow">
                 <SelectValue placeholder="Statut" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="glass-premium border-glow">
                 <SelectItem value="all">Tous les statuts</SelectItem>
                 <SelectItem value="draft">Brouillon</SelectItem>
                 <SelectItem value="review">En révision</SelectItem>
@@ -186,7 +177,7 @@ export default function ProjectsPage() {
                 <SelectItem value="completed">Finalisé</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" className="w-full md:w-auto bg-transparent">
+            <Button variant="outline" className="w-full md:w-auto glass hover-lift">
               <Filter className="mr-2 h-4 w-4" />
               Filtres
             </Button>
@@ -196,19 +187,25 @@ export default function ProjectsPage() {
 
       {/* Projects Grid */}
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {projects.map((project) => (
-          <Card key={project.id} className="border-border transition-shadow hover:shadow-lg">
+        {projectsLoading ? (
+          <div className="col-span-full text-center text-muted-foreground">Chargement...</div>
+        ) : projects.length === 0 ? (
+          <div className="col-span-full text-center text-muted-foreground">Aucun projet trouvé</div>
+        ) : (
+          projects.map((project) => (
+            <Card key={project.id} className="card-premium border-glow group">
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity rounded-xl pointer-events-none" />
             <CardHeader>
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <CardTitle className="text-lg leading-tight">
-                      <Link href={`/dashboard/projects/${project.id}`} className="hover:text-primary">
+                    <CardTitle className="text-lg leading-tight font-serif">
+                      <Link href={`/dashboard/projects/${project.id}`} className="hover:text-primary transition-colors">
                         {project.name}
                       </Link>
                     </CardTitle>
                     {project.confidential && (
-                      <Badge variant="secondary" className="bg-red-500/10 text-red-500 hover:bg-red-500/20">
+                      <Badge variant="secondary" className="bg-red-500/10 text-red-500 hover:bg-red-500/20 glass">
                         <Lock className="mr-1 h-3 w-3" />
                         Confidentiel
                       </Badge>
@@ -218,23 +215,23 @@ export default function ProjectsPage() {
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 glass hover-lift">
                       <MoreVertical className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem asChild>
+                  <DropdownMenuContent align="end" className="glass-premium border-glow">
+                    <DropdownMenuItem asChild className="cursor-pointer hover:glass">
                       <Link href={`/dashboard/projects/${project.id}`}>Ouvrir</Link>
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleManageMembers(project)}>
+                    <DropdownMenuItem onClick={() => handleManageMembers(project)} className="cursor-pointer hover:glass">
                       <UserPlus className="mr-2 h-4 w-4" />
                       Gérer les membres
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleShareProject(project)}>
+                    <DropdownMenuItem onClick={() => handleShareProject(project)} className="cursor-pointer hover:glass">
                       <Share2 className="mr-2 h-4 w-4" />
                       Partager
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive" onClick={() => handleDeleteProject(project)}>
+                    <DropdownMenuItem className="text-destructive cursor-pointer hover:bg-destructive/10" onClick={() => handleDeleteProject(project)}>
                       <Trash2 className="mr-2 h-4 w-4" />
                       Supprimer
                     </DropdownMenuItem>
@@ -246,15 +243,15 @@ export default function ProjectsPage() {
               <div className="flex items-center justify-between">
                 <Badge
                   variant={project.status === "Finalisé" ? "secondary" : "default"}
-                  className={
+                  className={`glass ${
                     project.status === "En révision"
                       ? "bg-primary/10 text-primary hover:bg-primary/20"
                       : project.status === "Finalisé"
-                        ? ""
+                        ? "bg-green-500/10 text-green-500 hover:bg-green-500/20"
                         : project.status === "Brouillon"
                           ? "bg-muted text-muted-foreground hover:bg-muted"
                           : "bg-accent/10 text-accent hover:bg-accent/20"
-                  }
+                  }`}
                 >
                   {project.status}
                 </Badge>
@@ -265,110 +262,64 @@ export default function ProjectsPage() {
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-1 text-muted-foreground">
                     <FolderOpen className="h-4 w-4" />
-                    <span>{project.documents}</span>
+                    <span>{project._count.documents}</span>
                   </div>
                   <div className="flex items-center gap-1 text-muted-foreground">
                     <Users className="h-4 w-4" />
-                    <span>{project.members}</span>
+                    <span>{project._count.members}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 text-muted-foreground">
                   <Clock className="h-4 w-4" />
-                  <span>{project.dueDate}</span>
+                  <span>{project.deadline ? new Date(project.deadline).toLocaleDateString("fr-FR") : "Aucune échéance"}</span>
                 </div>
               </div>
             </CardContent>
-          </Card>
-        ))}
+            </Card>
+          ))
+        )}
       </div>
 
-      {/* Share/Invite Modal */}
-      <Dialog open={showShareModal} onOpenChange={setShowShareModal}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Inviter un membre au projet</DialogTitle>
-            <DialogDescription>
-              Partagez l'accès à ce projet avec un collègue ou un collaborateur externe.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            {selectedProject?.confidential && (
-              <Alert className="border-red-500/50 bg-red-500/5">
-                <AlertTriangle className="h-4 w-4 text-red-500" />
-                <AlertDescription className="text-xs">
-                  <strong>Projet confidentiel :</strong> Ce projet contient des informations sensibles. Assurez-vous que le nouveau membre a l'autorisation nécessaire.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="inviteEmail">Email du membre</Label>
-              <Input
-                id="inviteEmail"
-                type="email"
-                placeholder="collaborateur@cabinet.fr"
-                value={shareEmail}
-                onChange={(e) => setShareEmail(e.target.value)}
+      {/* Invite Member Dialog */}
+      {selectedProject && (
+        <InviteMemberDialog
+          projectId={selectedProject.id}
+          projectName={selectedProject.name}
+          onInviteSuccess={handleInviteSuccess}
+          trigger={null}
+        />
+      )}
+      <Dialog open={showInviteDialog} onOpenChange={setShowInviteDialog}>
+        <DialogContent className="sm:max-w-[500px] glass-premium border-glow">
+          {selectedProject && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-serif text-2xl">Inviter un membre</DialogTitle>
+                <DialogDescription>
+                  Invitez un collaborateur à rejoindre le projet "{selectedProject.name}"
+                </DialogDescription>
+              </DialogHeader>
+              {selectedProject.confidential && (
+                <Alert className="border-red-500/50 bg-red-500/5">
+                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                  <AlertDescription className="text-xs">
+                    <strong>Projet confidentiel :</strong> Ce projet contient des informations sensibles. Assurez-vous que le nouveau membre a l'autorisation nécessaire.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <InviteMemberDialog
+                projectId={selectedProject.id}
+                projectName={selectedProject.name}
+                onInviteSuccess={handleInviteSuccess}
+                trigger={
+                  <Button className="w-full">
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Ouvrir le formulaire d'invitation
+                  </Button>
+                }
               />
-            </div>
-
-            <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
-              <p className="text-sm font-medium">Permissions</p>
-              <div className="space-y-2">
-                <div className="flex items-start space-x-2">
-                  <Checkbox
-                    id="canEdit"
-                    checked={shareSettings.canEdit}
-                    onCheckedChange={(checked) => setShareSettings({ ...shareSettings, canEdit: checked as boolean })}
-                  />
-                  <label htmlFor="canEdit" className="text-sm leading-relaxed">
-                    Peut modifier les documents du projet
-                  </label>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <Checkbox
-                    id="canInvite"
-                    checked={shareSettings.canInvite}
-                    onCheckedChange={(checked) => setShareSettings({ ...shareSettings, canInvite: checked as boolean })}
-                  />
-                  <label htmlFor="canInvite" className="text-sm leading-relaxed">
-                    Peut inviter d'autres membres
-                  </label>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <Checkbox
-                    id="canDelete"
-                    checked={shareSettings.canDelete}
-                    onCheckedChange={(checked) => setShareSettings({ ...shareSettings, canDelete: checked as boolean })}
-                  />
-                  <label htmlFor="canDelete" className="text-sm leading-relaxed">
-                    Peut supprimer des documents (nécessite confirmation)
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <Alert className="border-blue-500/50 bg-blue-500/5">
-              <Shield className="h-4 w-4 text-blue-500" />
-              <AlertDescription className="text-xs">
-                Le nouveau membre recevra un email d'invitation sécurisé. Toutes ses actions seront enregistrées dans le journal d'audit.
-              </AlertDescription>
-            </Alert>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              setShowShareModal(false)
-              setShareEmail("")
-            }}>
-              Annuler
-            </Button>
-            <Button onClick={handleShareConfirm}>
-              <UserPlus className="mr-2 h-4 w-4" />
-              Envoyer l'invitation
-            </Button>
-          </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -417,9 +368,9 @@ export default function ProjectsPage() {
 
       {/* Members Management Modal */}
       <Dialog open={showMembersModal} onOpenChange={setShowMembersModal}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[600px] glass-premium border-glow">
           <DialogHeader>
-            <DialogTitle>Gérer les membres - {selectedProject?.name}</DialogTitle>
+            <DialogTitle className="font-serif text-2xl">Gérer les membres - {selectedProject?.name}</DialogTitle>
             <DialogDescription>
               Visualisez et gérez les accès au projet.
             </DialogDescription>
@@ -436,48 +387,35 @@ export default function ProjectsPage() {
             )}
 
             <div className="space-y-3">
-              {/* Mock members list */}
-              {[
-                { name: "Jean Dupont", email: "jean.dupont@cabinet.fr", role: "Propriétaire", canRemove: false },
-                { name: "Marie Dubois", email: "marie.dubois@cabinet.fr", role: "Éditeur", canRemove: true },
-              ].map((member, i) => (
-                <div key={i} className="flex items-center justify-between rounded-lg border border-border p-4">
-                  <div className="flex-1">
-                    <p className="font-medium">{member.name}</p>
-                    <p className="text-sm text-muted-foreground">{member.email}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">{member.role}</Badge>
-                    {member.canRemove && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-destructive"
-                        onClick={() => {
-                          toast.success("Membre retiré", {
-                            description: `${member.name} n'a plus accès au projet.`,
-                          })
-                        }}
-                      >
-                        Retirer
-                      </Button>
-                    )}
-                  </div>
+              {/* TODO: Integrate dynamic members list with project-specific API endpoint */}
+              {selectedProject?._count?.members > 0 ? (
+                <div className="text-center text-muted-foreground py-4">
+                  <p className="font-medium">{selectedProject._count.members} membre{selectedProject._count.members > 1 ? 's' : ''} dans ce projet</p>
+                  <p className="text-sm mt-1">Fonctionnalité de gestion des membres en cours d'implémentation</p>
                 </div>
-              ))}
+              ) : (
+                <div className="text-center text-muted-foreground py-4">
+                  <p>Aucun membre dans ce projet</p>
+                </div>
+              )}
             </div>
 
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => {
-                setShowMembersModal(false)
-                handleShareProject(selectedProject)
-              }}
-            >
-              <UserPlus className="mr-2 h-4 w-4" />
-              Inviter un nouveau membre
-            </Button>
+            {selectedProject && (
+              <InviteMemberDialog
+                projectId={selectedProject.id}
+                projectName={selectedProject.name}
+                onInviteSuccess={() => {
+                  setShowMembersModal(false)
+                  queryClient.invalidateQueries({ queryKey: ["projects"] })
+                }}
+                trigger={
+                  <Button variant="outline" className="w-full">
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    Inviter un nouveau membre
+                  </Button>
+                }
+              />
+            )}
           </div>
 
           <DialogFooter>
@@ -485,6 +423,16 @@ export default function ProjectsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Upgrade Dialog */}
+      <UpgradeDialog
+        open={showUpgradeDialog}
+        onOpenChange={setShowUpgradeDialog}
+        feature="créer un nouveau projet"
+        currentUsage={projectCount}
+        limit={projectLimit}
+        usageLabel="projet"
+      />
     </div>
   )
 }

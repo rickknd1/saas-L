@@ -10,18 +10,44 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { CreditCard, Users, Shield, Check, AlertTriangle, Lock, QrCode, Smartphone, Key } from "lucide-react"
+import { CreditCard, Users, Shield, Check, AlertTriangle, Lock, QrCode, Smartphone, Key, X } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useUserPlan } from "@/hooks/use-user-plan"
-import { useState } from "react"
+import { useBillingData } from "@/hooks/use-billing-data"
+import { useAuth } from "@/hooks/use-auth"
+import { useMemberStats } from "@/hooks/use-members"
+import { useState, useEffect } from "react"
 import { toast } from "sonner"
+// resetUserPlan supprimé - géré automatiquement par React Query
 import { SecurityModal } from "@/components/security/security-modal"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
+import { UpdatePaymentModal } from "@/components/billing/update-payment-modal"
 
 export default function SettingsPage() {
+  const router = useRouter()
   const { plan, isFreemium, isStandard, isLoading } = useUserPlan()
+  const { user, userId, refetchUser } = useAuth()
+  const { paymentMethods, invoices, isLoading: billingLoading } = useBillingData()
+  const { stats, isLoading: statsLoading } = useMemberStats(userId)
+  const [subscriptionDetails, setSubscriptionDetails] = useState<any>(null)
+  const [isMounted, setIsMounted] = useState(false)
+
+  // Éviter les erreurs d'hydratation en attendant le montage côté client
+  useEffect(() => {
+    setIsMounted(true)
+  }, [])
+
+  // Refetch user data on mount to ensure plan is up to date
+  useEffect(() => {
+    refetchUser()
+  }, [refetchUser])
+
+  const userInitials = user?.firstName && user?.lastName
+    ? `${user.firstName[0]}${user.lastName[0]}`.toUpperCase()
+    : user?.email?.[0].toUpperCase() || 'U'
   const [passwordData, setPasswordData] = useState({
     current: "",
     new: "",
@@ -30,9 +56,153 @@ export default function SettingsPage() {
   const [show2FAModal, setShow2FAModal] = useState(false)
   const [showRevokeModal, setShowRevokeModal] = useState(false)
   const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false)
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [selectedSession, setSelectedSession] = useState<any>(null)
   const [twoFAEnabled, setTwoFAEnabled] = useState(false)
   const [verificationCode, setVerificationCode] = useState("")
+  const [isPortalLoading, setIsPortalLoading] = useState(false)
+  const [deletingCardId, setDeletingCardId] = useState<string | null>(null)
+  const [settingDefaultCardId, setSettingDefaultCardId] = useState<string | null>(null)
+
+  // Récupérer les détails de l'abonnement (seulement si historique existe)
+  useEffect(() => {
+    const fetchSubscriptionDetails = async () => {
+      if (!userId) return
+
+      try {
+        const response = await fetch(`/api/billing/subscription?userId=${userId}`, {
+          credentials: "include", // IMPORTANT: Envoyer les cookies httpOnly
+        })
+        const data = await response.json()
+
+        if (response.ok && data.hasSubscription !== false) {
+          // Ne set que si l'utilisateur a un historique d'abonnement
+          setSubscriptionDetails(data)
+
+          // APPROCHE STANDARD: L'utilisateur garde son plan jusqu'à expiration
+          // On affichera un message "Prend fin le [DATE]" dans l'UI
+          if (data.cancelAtPeriodEnd === true) {
+            console.log("⚠️ Abonnement marqué pour annulation à la fin de période:", data.currentPeriodEnd)
+          }
+        }
+      } catch (error) {
+        console.error("Erreur lors de la récupération des détails de l'abonnement:", error)
+      }
+    }
+
+    fetchSubscriptionDetails()
+  }, [userId])
+
+  const handleUpdatePaymentMethod = () => {
+    if (!userId) {
+      toast.error("Erreur", {
+        description: "Utilisateur non connecté",
+      })
+      return
+    }
+    setShowPaymentModal(true)
+  }
+
+  const handleCancelSubscription = () => {
+    setShowCancelModal(true)
+  }
+
+  const handleReactivateSubscription = async () => {
+    if (!userId) {
+      toast.error("Erreur", {
+        description: "Utilisateur non connecté",
+      })
+      return
+    }
+
+    try {
+      const response = await fetch("/api/billing/reactivate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // IMPORTANT: Envoyer les cookies httpOnly
+        body: JSON.stringify({ userId }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        if (data.reactivated) {
+          // Cas 1 : Réactivation directe (période encore valide)
+
+          toast.success("Abonnement réactivé", {
+            description: data.message,
+            duration: 3000,
+          })
+
+          // Recharger la page pour afficher le plan Standard (React Query refetch auto)
+          setTimeout(() => {
+            window.location.reload()
+          }, 1500)
+        } else if (data.checkoutUrl) {
+          // Cas 2 : Période expirée, redirection vers Stripe
+          window.location.href = data.checkoutUrl
+        } else {
+          throw new Error("Réponse invalide du serveur")
+        }
+      } else {
+        throw new Error(data.error || "Erreur lors de la réactivation")
+      }
+    } catch (error) {
+      console.error("Erreur réactivation:", error)
+      toast.error("Erreur", {
+        description: error instanceof Error ? error.message : "Impossible de réactiver l'abonnement",
+      })
+    }
+  }
+
+  const handleCancelConfirm = async () => {
+    if (!userId) {
+      toast.error("Erreur", {
+        description: "Utilisateur non connecté",
+      })
+      return
+    }
+
+    try {
+      const response = await fetch("/api/billing/cancel", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // IMPORTANT: Envoyer les cookies httpOnly
+        body: JSON.stringify({ userId }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setShowCancelModal(false)
+
+        // APPROCHE STANDARD: L'utilisateur garde son plan jusqu'à expiration
+        // Pas besoin de changer localStorage, juste recharger pour afficher le nouveau statut
+
+        toast.success("Abonnement annulé", {
+          description: data.message,
+          duration: 5000,
+        })
+
+        // Recharger après un délai pour laisser le temps au toast
+        setTimeout(() => {
+          window.location.reload()
+        }, 2000)
+      } else {
+        throw new Error(data.error || "Erreur lors de l'annulation")
+      }
+    } catch (error) {
+      console.error("Erreur annulation:", error)
+      toast.error("Erreur", {
+        description: error instanceof Error ? error.message : "Impossible d'annuler l'abonnement",
+      })
+    }
+  }
 
   const handlePasswordChange = () => {
     if (!passwordData.current) {
@@ -132,16 +302,115 @@ export default function SettingsPage() {
     })
   }
 
-  if (isLoading) {
-    return <div className="space-y-6">Chargement...</div>
+  const handleSetDefaultCard = async (paymentMethodId: string) => {
+    if (!userId) {
+      toast.error("Erreur", {
+        description: "Utilisateur non connecté",
+      })
+      return
+    }
+
+    setSettingDefaultCardId(paymentMethodId)
+
+    try {
+      const response = await fetch("/api/billing/payment-methods/set-default", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // IMPORTANT: Envoyer les cookies httpOnly
+        body: JSON.stringify({ userId, paymentMethodId }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        toast.success("Carte mise à jour", {
+          description: "Cette carte est maintenant votre méthode de paiement par défaut.",
+          duration: 3000,
+        })
+
+        // Recharger pour afficher le nouveau statut
+        setTimeout(() => {
+          window.location.reload()
+        }, 1000)
+      } else {
+        throw new Error(data.error || "Erreur lors de la modification")
+      }
+    } catch (error) {
+      console.error("Erreur set default card:", error)
+      toast.error("Erreur", {
+        description: error instanceof Error ? error.message : "Impossible de modifier la carte par défaut",
+      })
+    } finally {
+      setSettingDefaultCardId(null)
+    }
+  }
+
+  const handleDeleteCard = async (paymentMethodId: string) => {
+    if (!userId) {
+      toast.error("Erreur", {
+        description: "Utilisateur non connecté",
+      })
+      return
+    }
+
+    setDeletingCardId(paymentMethodId)
+
+    try {
+      const response = await fetch("/api/billing/payment-methods/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include", // IMPORTANT: Envoyer les cookies httpOnly
+        body: JSON.stringify({ userId, paymentMethodId }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        toast.success("Carte supprimée", {
+          description: "La carte a été supprimée de votre compte.",
+          duration: 3000,
+        })
+
+        // Recharger pour afficher la liste mise à jour
+        setTimeout(() => {
+          window.location.reload()
+        }, 1000)
+      } else {
+        throw new Error(data.error || "Erreur lors de la suppression")
+      }
+    } catch (error) {
+      console.error("Erreur delete card:", error)
+      toast.error("Erreur", {
+        description: error instanceof Error ? error.message : "Impossible de supprimer cette carte",
+      })
+    } finally {
+      setDeletingCardId(null)
+    }
+  }
+
+  // Éviter hydration mismatch en rendant uniquement après montage
+  if (!isMounted || isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-8 w-48 animate-pulse rounded bg-muted"></div>
+        <div className="h-4 w-96 animate-pulse rounded bg-muted"></div>
+      </div>
+    )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="relative min-h-screen p-6">
+      {/* Gradient Mesh Background */}
+      <div className="gradient-mesh fixed inset-0 -z-10" />
+
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Paramètres</h1>
-        <p className="text-muted-foreground">Gérez vos préférences et votre compte</p>
+      <div className="mb-8">
+        <h1 className="font-serif text-5xl font-bold mb-2 text-foreground">Paramètres</h1>
+        <p className="text-muted-foreground text-lg">Gérez vos préférences et votre compte</p>
       </div>
 
       <Tabs defaultValue="profile" className="space-y-6">
@@ -155,15 +424,15 @@ export default function SettingsPage() {
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="space-y-6">
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Informations personnelles</CardTitle>
+              <CardTitle className="font-serif text-2xl">Informations personnelles</CardTitle>
               <CardDescription>Mettez à jour vos informations de profil</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex items-center gap-6">
                 <Avatar className="h-20 w-20">
-                  <AvatarFallback className="bg-primary/10 text-xl text-primary">JD</AvatarFallback>
+                  <AvatarFallback className="bg-primary/10 text-xl text-primary">{userInitials}</AvatarFallback>
                 </Avatar>
                 <div className="space-y-2">
                   <Button variant="outline" size="sm">
@@ -176,22 +445,22 @@ export default function SettingsPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="firstName">Prénom</Label>
-                  <Input id="firstName" defaultValue="Jean" />
+                  <Input id="firstName" defaultValue={user?.firstName || ''} placeholder="Votre prénom" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="lastName">Nom</Label>
-                  <Input id="lastName" defaultValue="Dupont" />
+                  <Input id="lastName" defaultValue={user?.lastName || ''} placeholder="Votre nom" />
                 </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" defaultValue="jean.dupont@cabinet.fr" />
+                <Input id="email" type="email" defaultValue={user?.email || ''} placeholder="votre@email.com" />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="phone">Téléphone</Label>
-                <Input id="phone" type="tel" defaultValue="+33 1 23 45 67 89" />
+                <Input id="phone" type="tel" defaultValue="" placeholder="+33 1 23 45 67 89" />
               </div>
 
               <div className="space-y-2">
@@ -221,7 +490,7 @@ export default function SettingsPage() {
 
               <div className="flex justify-end gap-2">
                 <Button variant="outline">Annuler</Button>
-                <Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={handleProfileSave}>
+                <Button onClick={handleProfileSave}>
                   Enregistrer les modifications
                 </Button>
               </div>
@@ -231,50 +500,50 @@ export default function SettingsPage() {
 
         {/* Organization Tab */}
         <TabsContent value="organization" className="space-y-6">
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Informations de l'organisation</CardTitle>
+              <CardTitle className="font-serif text-2xl">Informations de l'organisation</CardTitle>
               <CardDescription>Gérez les détails de votre cabinet</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label htmlFor="orgName">Nom du cabinet</Label>
-                <Input id="orgName" defaultValue="Cabinet Dupont & Associés" />
+                <Input id="orgName" defaultValue="" placeholder="Nom de votre cabinet" />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="orgAddress">Adresse</Label>
-                <Input id="orgAddress" defaultValue="123 Avenue des Champs-Élysées, 75008 Paris" />
+                <Input id="orgAddress" defaultValue="" placeholder="Adresse du cabinet" />
               </div>
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="orgPhone">Téléphone</Label>
-                  <Input id="orgPhone" defaultValue="+33 1 23 45 67 89" />
+                  <Input id="orgPhone" defaultValue="" placeholder="+33 1 23 45 67 89" />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="orgEmail">Email</Label>
-                  <Input id="orgEmail" type="email" defaultValue="contact@cabinet-dupont.fr" />
+                  <Input id="orgEmail" type="email" defaultValue="" placeholder="contact@votrecabinet.fr" />
                 </div>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="orgSiret">SIRET</Label>
-                <Input id="orgSiret" defaultValue="123 456 789 00012" />
+                <Input id="orgSiret" defaultValue="" placeholder="123 456 789 00012" />
               </div>
 
               <div className="flex justify-end gap-2">
                 <Button variant="outline">Annuler</Button>
-                <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+                <Button>
                   Enregistrer les modifications
                 </Button>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Membres de l'organisation</CardTitle>
+              <CardTitle className="font-serif text-2xl">Membres de l'organisation</CardTitle>
               <CardDescription>Gérez les accès et les rôles</CardDescription>
             </CardHeader>
             <CardContent>
@@ -283,12 +552,12 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-3">
                     <Users className="h-5 w-5 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">8 membres actifs</p>
-                      <p className="text-sm text-muted-foreground">2 invitations en attente</p>
+                      <p className="font-medium">{stats?.total || 0} membre{(stats?.total || 0) > 1 ? 's' : ''} actif{(stats?.total || 0) > 1 ? 's' : ''}</p>
+                      <p className="text-sm text-muted-foreground">{stats?.pendingInvitations || 0} invitation{(stats?.pendingInvitations || 0) > 1 ? 's' : ''} en attente</p>
                     </div>
                   </div>
                   <Button variant="outline" asChild>
-                    <Link href="/dashboard/members">Gérer les membres</Link>
+                    <Link href="/dashboard/team">Gérer les membres</Link>
                   </Button>
                 </div>
               </div>
@@ -298,9 +567,9 @@ export default function SettingsPage() {
 
         {/* Notifications Tab */}
         <TabsContent value="notifications" className="space-y-6">
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Préférences de notification</CardTitle>
+              <CardTitle className="font-serif text-2xl">Préférences de notification</CardTitle>
               <CardDescription>Choisissez comment vous souhaitez être notifié</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -359,7 +628,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="flex justify-end">
-                <Button className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={handleNotificationsSave}>
+                <Button onClick={handleNotificationsSave}>
                   Enregistrer les préférences
                 </Button>
               </div>
@@ -369,9 +638,9 @@ export default function SettingsPage() {
 
         {/* Security Tab */}
         <TabsContent value="security" className="space-y-6">
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Mot de passe</CardTitle>
+              <CardTitle className="font-serif text-2xl">Mot de passe</CardTitle>
               <CardDescription>Modifiez votre mot de passe</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -415,7 +684,6 @@ export default function SettingsPage() {
 
               <div className="flex justify-end">
                 <Button
-                  className="bg-primary text-primary-foreground hover:bg-primary/90"
                   onClick={handlePasswordChange}
                   disabled={!passwordData.current || !passwordData.new || !passwordData.confirm}
                 >
@@ -426,9 +694,9 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Authentification à deux facteurs</CardTitle>
+              <CardTitle className="font-serif text-2xl">Authentification à deux facteurs</CardTitle>
               <CardDescription>Ajoutez une couche de sécurité supplémentaire</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -473,9 +741,9 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Sessions actives</CardTitle>
+              <CardTitle className="font-serif text-2xl">Sessions actives</CardTitle>
               <CardDescription>Gérez vos sessions de connexion</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -508,9 +776,9 @@ export default function SettingsPage() {
 
         {/* Billing Tab */}
         <TabsContent value="billing" className="space-y-6">
-          <Card className="border-border">
+          <Card className="card-premium border-glow">
             <CardHeader>
-              <CardTitle>Abonnement actuel</CardTitle>
+              <CardTitle className="font-serif text-2xl">Abonnement actuel</CardTitle>
               <CardDescription>Gérez votre plan et votre facturation</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -522,131 +790,244 @@ export default function SettingsPage() {
                         <h3 className="text-2xl font-bold">Plan Freemium</h3>
                         <Badge variant="secondary">Actif</Badge>
                       </div>
-                      <p className="mt-2 text-muted-foreground">5 projets maximum • Fonctionnalités de base</p>
+                      <p className="mt-2 text-muted-foreground">1 projet maximum • Fonctionnalités de base</p>
                       <p className="mt-4 text-3xl font-bold">
                         0€<span className="text-base font-normal text-muted-foreground">/mois</span>
                       </p>
                     </div>
-                    <Button className="bg-primary text-primary-foreground hover:bg-primary/90" asChild>
-                      <Link href="/dashboard/upgrade">Passer au Standard</Link>
-                    </Button>
+                    {/* Bouton différent selon historique d'abonnement */}
+                    {subscriptionDetails ? (
+                      <Button
+                        onClick={handleReactivateSubscription}
+                      >
+                        Réactiver mon abonnement
+                      </Button>
+                    ) : (
+                      <Button asChild>
+                        <Link href="/dashboard/upgrade">Passer au Standard</Link>
+                      </Button>
+                    )}
                   </div>
 
-                  <div className="rounded-lg border border-primary/50 bg-primary/5 p-4">
-                    <p className="text-sm font-medium text-primary">
-                      Passez au plan Standard pour 23€/mois et débloquez toutes les fonctionnalités
-                    </p>
-                  </div>
+                  {!subscriptionDetails && (
+                    <div className="rounded-lg border border-primary/50 bg-primary/5 p-4">
+                      <p className="text-sm font-medium text-primary">
+                        Passez au plan Standard pour 23€/mois et débloquez toutes les fonctionnalités
+                      </p>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
                   <div className="flex items-center justify-between rounded-lg border-2 border-primary/50 bg-gradient-to-r from-primary/5 to-accent/5 p-6">
-                    <div>
+                    <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="text-2xl font-bold">Plan Standard</h3>
-                        <Badge className="bg-primary/10 text-primary">Actif</Badge>
+                        {subscriptionDetails?.cancelAtPeriodEnd ? (
+                          <Badge variant="secondary" className="bg-orange-500/10 text-orange-600">
+                            Prend fin le {subscriptionDetails?.currentPeriodEnd ? new Date(subscriptionDetails.currentPeriodEnd).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : ''}
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-primary/10 text-primary">Actif</Badge>
+                        )}
                       </div>
-                      <p className="mt-2 text-muted-foreground">
-                        Projets illimités • Toutes les fonctionnalités • Support prioritaire
-                      </p>
+                      <p className="mt-1 text-sm font-medium text-muted-foreground">Mensuel</p>
+                      {subscriptionDetails?.cancelAtPeriodEnd ? (
+                        <p className="mt-1 text-sm text-orange-600 font-medium">
+                          Votre abonnement a été annulé. Vous conservez l'accès jusqu'au {subscriptionDetails?.currentPeriodEnd ? new Date(subscriptionDetails.currentPeriodEnd).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}.
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Votre abonnement se renouvellera automatiquement le {subscriptionDetails?.currentPeriodEnd ? new Date(subscriptionDetails.currentPeriodEnd).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : new Date(Date.now() + 30*24*60*60*1000).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}.
+                        </p>
+                      )}
                       <p className="mt-4 text-3xl font-bold">
                         23€<span className="text-base font-normal text-muted-foreground">/mois</span>
                       </p>
-                      <p className="mt-2 text-sm text-muted-foreground">Prochaine facturation le 22 janvier 2025</p>
                     </div>
-                    <Button variant="outline" className="bg-transparent">
-                      Gérer l'abonnement
-                    </Button>
+                    {/* Bouton Réactiver si abonnement annulé */}
+                    {subscriptionDetails?.cancelAtPeriodEnd && (
+                      <Button
+                        onClick={handleReactivateSubscription}
+                      >
+                        Réactiver mon abonnement
+                      </Button>
+                    )}
                   </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-                  <div className="rounded-lg border border-green-500/50 bg-green-500/5 p-4">
-                    <p className="text-sm font-medium text-green-600">
-                      Vous profitez actuellement de toutes les fonctionnalités premium de Companion
+          {/* Section Paiement - Toujours afficher s'il y a eu un abonnement */}
+          {(paymentMethods.length > 0 || subscriptionDetails) && (
+            <Card className="card-premium border-glow">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="font-serif text-2xl">Méthodes de paiement</CardTitle>
+                  <CardDescription>Gérez vos cartes bancaires enregistrées</CardDescription>
+                </div>
+                {isStandard && subscriptionDetails?.status === 'active' && !subscriptionDetails?.cancelAtPeriodEnd && (
+                  <Button
+                    variant="outline"
+                    onClick={handleUpdatePaymentMethod}
+                    disabled={isPortalLoading}
+                  >
+                    {isPortalLoading ? "Ouverture..." : "Ajouter une carte"}
+                  </Button>
+                )}
+              </CardHeader>
+              <CardContent>
+                {billingLoading ? (
+                  <div className="flex items-center justify-center p-8">
+                    <p className="text-sm text-muted-foreground">Chargement des cartes...</p>
+                  </div>
+                ) : paymentMethods.length > 0 ? (
+                  <div className="space-y-3">
+                    {paymentMethods.map((method) => (
+                      <div
+                        key={method.id}
+                        className={`flex items-center justify-between rounded-lg border p-4 ${
+                          method.isDefault ? 'border-primary bg-primary/5' : 'border-border'
+                        }`}
+                      >
+                        <div className="flex items-center gap-4">
+                          <CreditCard className={`h-5 w-5 ${method.isDefault ? 'text-primary' : 'text-muted-foreground'}`} />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium capitalize">{method.brand} •••• {method.last4}</span>
+                              {method.isDefault && (
+                                <Badge className="bg-primary/10 text-primary">Par défaut</Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Expire {method.expMonth.toString().padStart(2, '0')}/{method.expYear}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {!method.isDefault && isStandard && subscriptionDetails?.status === 'active' && !subscriptionDetails?.cancelAtPeriodEnd && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleSetDefaultCard(method.id)}
+                              disabled={settingDefaultCardId === method.id || deletingCardId !== null}
+                            >
+                              {settingDefaultCardId === method.id ? "Mise à jour..." : "Définir par défaut"}
+                            </Button>
+                          )}
+                          {!method.isDefault && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => handleDeleteCard(method.id)}
+                              disabled={deletingCardId === method.id || settingDefaultCardId !== null}
+                            >
+                              {deletingCardId === method.id ? "Suppression..." : "Supprimer"}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8 text-center">
+                    <CreditCard className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                    <p className="text-sm font-medium text-muted-foreground mb-2">Aucune carte enregistrée</p>
+                    <p className="text-xs text-muted-foreground mb-4">Ajoutez une carte pour gérer vos paiements</p>
+                    {isStandard && subscriptionDetails?.status === 'active' && !subscriptionDetails?.cancelAtPeriodEnd && (
+                      <Button
+                        variant="outline"
+                        onClick={handleUpdatePaymentMethod}
+                        disabled={isPortalLoading}
+                      >
+                        {isPortalLoading ? "Ouverture..." : "Ajouter une carte"}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Section Factures - Toujours afficher s'il y a eu un abonnement */}
+          {(invoices.length > 0 || subscriptionDetails) && (
+            <Card className="card-premium border-glow" data-section="invoices">
+              <CardHeader>
+                <CardTitle className="font-serif text-2xl">Factures</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {billingLoading ? (
+                  <div className="p-4 text-center">
+                    <p className="text-sm text-muted-foreground">Chargement...</p>
+                  </div>
+                ) : invoices.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border">
+                          <th className="pb-3 text-left text-sm font-medium text-muted-foreground">Date</th>
+                          <th className="pb-3 text-left text-sm font-medium text-muted-foreground">Total</th>
+                          <th className="pb-3 text-left text-sm font-medium text-muted-foreground">Statut</th>
+                          <th className="pb-3 text-right text-sm font-medium text-muted-foreground">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invoices.map((invoice) => (
+                          <tr key={invoice.id} className="border-b border-border last:border-0">
+                            <td className="py-3 text-sm">{invoice.date}</td>
+                            <td className="py-3 text-sm font-medium">{invoice.amount} {invoice.currency}</td>
+                            <td className="py-3 text-sm">
+                              <Badge variant="secondary" className="bg-green-500/10 text-green-600">
+                                {invoice.status}
+                              </Badge>
+                            </td>
+                            <td className="py-3 text-right">
+                              {invoice.pdfUrl && (
+                                <Button variant="outline" size="sm" asChild>
+                                  <a href={invoice.pdfUrl} target="_blank" rel="noopener noreferrer">
+                                    Voir
+                                  </a>
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-4 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      Aucune facture pour le moment.
                     </p>
                   </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
-          <Card className="border-border">
-            <CardHeader>
-              <CardTitle>Méthode de paiement</CardTitle>
-              <CardDescription>Gérez vos moyens de paiement</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {isStandard ? (
-                <>
-                  <div className="flex items-center justify-between rounded-lg border border-border p-4">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                        <CreditCard className="h-5 w-5 text-primary" />
-                      </div>
-                      <div>
-                        <p className="font-medium">Visa •••• 4242</p>
-                        <p className="text-sm text-muted-foreground">Expire 12/2025</p>
-                      </div>
-                    </div>
-                    <Button variant="outline" size="sm">
-                      Modifier
-                    </Button>
-                  </div>
-                  <Button variant="outline" className="w-full bg-transparent">
-                    Ajouter une méthode de paiement
+          {/* Section Annulation - Seulement si abonnement Standard actif et non annulé */}
+          {isStandard && subscriptionDetails?.status === 'active' && !subscriptionDetails?.cancelAtPeriodEnd && (
+            <Card className="card-premium border-glow">
+              <CardHeader>
+                <CardTitle className="font-serif text-2xl">Annulation</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">Annuler l'abonnement</p>
+                  <Button
+                    variant="destructive"
+                    onClick={handleCancelSubscription}
+                  >
+                    Annuler
                   </Button>
-                </>
-              ) : (
-                <div className="rounded-lg border border-dashed border-border p-8 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    Aucune méthode de paiement configurée. Passez au plan Standard pour ajouter un moyen de paiement.
-                  </p>
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
-          <Card className="border-border">
-            <CardHeader>
-              <CardTitle>Historique de facturation</CardTitle>
-              <CardDescription>
-                {isStandard ? "Vos dernières factures" : "Aucune facture pour le moment"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {isStandard ? (
-                <div className="space-y-3">
-                  {[
-                    { date: "1 Jan 2025", amount: "23€", status: "Payée", invoice: "INV-2025-001" },
-                    { date: "1 Déc 2024", amount: "23€", status: "Payée", invoice: "INV-2024-012" },
-                    { date: "1 Nov 2024", amount: "23€", status: "Payée", invoice: "INV-2024-011" },
-                  ].map((invoice, i) => (
-                    <div key={i} className="flex items-center justify-between rounded-lg border border-border p-4">
-                      <div>
-                        <p className="font-medium">{invoice.invoice}</p>
-                        <p className="text-sm text-muted-foreground">{invoice.date}</p>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <Badge variant="secondary" className="bg-green-500/10 text-green-600">
-                          {invoice.status}
-                        </Badge>
-                        <p className="font-semibold">{invoice.amount}</p>
-                        <Button variant="outline" size="sm">
-                          Télécharger
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-lg border border-dashed border-border p-8 text-center">
-                  <p className="text-sm text-muted-foreground">
-                    Vous êtes actuellement sur le plan gratuit. Passez au plan Standard pour accéder à l'historique de
-                    facturation.
-                  </p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
         </TabsContent>
       </Tabs>
 
@@ -787,6 +1168,50 @@ export default function SettingsPage() {
           </AlertDescription>
         </Alert>
       </SecurityModal>
+
+      {/* Subscription Cancellation Modal */}
+      <SecurityModal
+        open={showCancelModal}
+        onOpenChange={setShowCancelModal}
+        title="Annuler votre abonnement"
+        description="Êtes-vous sûr de vouloir annuler votre abonnement Standard ?"
+        severity="danger"
+        confirmText="Annuler l'abonnement"
+        cancelText="Conserver l'abonnement"
+        onConfirm={handleCancelConfirm}
+        onCancel={() => setShowCancelModal(false)}
+      >
+        <Alert className="border-destructive/50 bg-destructive/5">
+          <AlertTriangle className="h-4 w-4 text-destructive" />
+          <AlertDescription className="text-xs">
+            <strong>Attention :</strong> Votre abonnement restera actif jusqu'à la fin de la période en cours, puis sera automatiquement annulé.
+          </AlertDescription>
+        </Alert>
+        <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-4">
+          <p className="text-sm font-medium">Que se passera-t-il après l'annulation ?</p>
+          <ul className="ml-4 list-disc space-y-1 text-xs text-muted-foreground">
+            <li>Vous conserverez l'accès jusqu'à la fin de la période en cours</li>
+            <li>Aucun remboursement ne sera effectué pour la période en cours</li>
+            <li>Votre compte redeviendra Freemium après la fin de l'abonnement</li>
+            <li>Vous pourrez vous réabonner à tout moment</li>
+          </ul>
+        </div>
+      </SecurityModal>
+
+      {/* Update Payment Method Modal */}
+      <UpdatePaymentModal
+        open={showPaymentModal}
+        onOpenChange={setShowPaymentModal}
+        userId={userId || ""}
+        onSuccess={() => {
+          setShowPaymentModal(false)
+          toast.success("Paiement mis à jour", {
+            description: "Votre méthode de paiement a été mise à jour avec succès.",
+          })
+          // Recharger les données de facturation
+          window.location.reload()
+        }}
+      />
     </div>
   )
 }

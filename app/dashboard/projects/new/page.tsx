@@ -9,22 +9,23 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ArrowLeft, AlertCircle, Sparkles, Loader2 } from "lucide-react"
+import { ArrowLeft, AlertCircle, Sparkles } from "lucide-react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useState, useEffect } from "react"
+import { useState } from "react"
+import { useAuth } from "@/hooks/use-auth"
+import { useProjects, type Project } from "@/hooks/use-projects"
 import { toast } from "sonner"
-import { useUserPlan } from "@/hooks/use-user-plan"
-import { PLAN_LIMITS } from "@/lib/plan-manager"
 
 export default function NewProjectPage() {
   const router = useRouter()
-  const { plan, isFreemium, isLoading: planLoading } = useUserPlan()
-  const [projectCount, setProjectCount] = useState(0)
-  const [isFetching, setIsFetching] = useState(true)
+  const { userId, user } = useAuth()
+  const { projects } = useProjects(userId || null)
 
-  const projectLimit = isFreemium ? PLAN_LIMITS.freemium.projects : PLAN_LIMITS.standard.projects
-  const isAtLimit = projectCount >= projectLimit
+  const userPlan = user?.plan || "freemium"
+  const projectCount = projects?.length || 0
+  const projectLimit = userPlan === "freemium" ? 5 : 999999
+  const isAtLimit = userPlan === "freemium" && projectCount >= projectLimit
 
   const [formData, setFormData] = useState({
     name: "",
@@ -35,30 +36,19 @@ export default function NewProjectPage() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isLoading, setIsLoading] = useState(false)
 
-  // Récupérer le nombre de projets au chargement
-  useEffect(() => {
-    const fetchProjectCount = async () => {
-      try {
-        const response = await fetch("/api/projects")
-        if (response.ok) {
-          const data = await response.json()
-          setProjectCount(data.count || 0)
-        }
-      } catch (error) {
-        console.error("Error fetching project count:", error)
-      } finally {
-        setIsFetching(false)
-      }
-    }
-
-    fetchProjectCount()
-  }, [])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (isAtLimit) {
       setErrors({ limit: "Limite de projets atteinte" })
+      toast.error("Limite de projets atteinte", {
+        description: "Passez au plan Standard pour créer des projets illimités"
+      })
+      return
+    }
+
+    if (!userId) {
+      toast.error("Erreur", { description: "Vous devez être connecté pour créer un projet" })
       return
     }
 
@@ -73,79 +63,70 @@ export default function NewProjectPage() {
     }
 
     setIsLoading(true)
+    setErrors({})
 
     try {
+      // Créer le projet via l'API
       const response = await fetch("/api/projects", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
         body: JSON.stringify({
-          name: formData.name,
-          description: formData.description,
-          type: formData.type,
-          client: formData.client,
+          userId,
+          name: formData.name.trim(),
+          description: `${formData.type} - ${formData.client}${formData.description ? '\n\n' + formData.description : ''}`,
+          status: "DRAFT",
+          priority: "MEDIUM",
+          confidential: false,
         }),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        // Gérer l'erreur de limitation freemium
-        if (data.code === "FREEMIUM_LIMIT_REACHED") {
-          toast.error("Limite atteinte", {
-            description: data.message,
-            action: {
-              label: "Passer au Standard",
-              onClick: () => router.push("/pricing"),
-            },
-            duration: 8000,
-          })
-          setErrors({ limit: data.message })
-          return
-        }
-
-        throw new Error(data.error || "Erreur lors de la création du projet")
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Erreur lors de la création du projet")
       }
 
-      toast.success("Projet créé !", {
-        description: `Le projet "${formData.name}" a été créé avec succès.`,
+      const data = await response.json()
+      console.log("[NewProject] Project created:", data.project)
+
+      toast.success("Projet créé avec succès", {
+        description: `${formData.name} a été créé`
       })
 
-      // Rediriger vers la page du projet
+      // Rediriger vers la page du projet créé avec le vrai ID
       router.push(`/dashboard/projects/${data.project.id}`)
-    } catch (error) {
-      console.error("Error creating project:", error)
-      toast.error("Erreur", {
-        description: error instanceof Error ? error.message : "Impossible de créer le projet",
+    } catch (error: any) {
+      console.error("[NewProject] Error creating project:", error)
+      toast.error("Erreur lors de la création", {
+        description: error.message || "Une erreur est survenue"
       })
+      setErrors({ submit: error.message })
     } finally {
       setIsLoading(false)
     }
   }
 
-  // Afficher un loader pendant le chargement
-  if (planLoading || isFetching) {
-    return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard/projects">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-3xl font-bold">Nouveau projet</h1>
-          <p className="text-muted-foreground">Créez un nouveau projet pour organiser vos contrats</p>
-        </div>
-      </div>
+    <div className="relative min-h-screen">
+      {/* Premium gradient mesh background */}
+      <div className="gradient-mesh fixed inset-0 -z-10" />
 
-      {isFreemium && projectCount >= projectLimit - 1 && (
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <Link href="/dashboard/projects">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          </Link>
+          <div>
+            <h1 className="font-serif text-5xl font-bold mb-2 text-foreground">Nouveau projet</h1>
+            <p className="text-muted-foreground text-lg">Créez un nouveau projet pour organiser vos contrats</p>
+          </div>
+        </div>
+
+      {userPlan === "freemium" && projectCount >= projectLimit - 1 && (
         <Alert className={isAtLimit ? "border-destructive/50 bg-destructive/5" : "border-accent/50 bg-accent/5"}>
           <AlertCircle className={`h-4 w-4 ${isAtLimit ? "text-destructive" : "text-accent"}`} />
           <AlertDescription className="flex items-center justify-between">
@@ -157,13 +138,13 @@ export default function NewProjectPage() {
                 </>
               ) : (
                 <>
-                  <strong>Attention !</strong> Vous utilisez {projectCount}/{projectLimit} projet{projectLimit > 1 ? "s" : ""}. Il vous reste{" "}
+                  <strong>Attention !</strong> Vous utilisez {projectCount}/{projectLimit} projets. Il vous reste{" "}
                   {projectLimit - projectCount} projet disponible.
                 </>
               )}
             </div>
             <Button variant="outline" size="sm" className="ml-4 shrink-0 bg-transparent" asChild>
-              <Link href="/pricing">
+              <Link href="/dashboard/upgrade">
                 <Sparkles className="mr-2 h-3 w-3" />
                 Passer au Standard
               </Link>
@@ -172,11 +153,11 @@ export default function NewProjectPage() {
         </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Informations du projet</CardTitle>
-          <CardDescription>Renseignez les détails de votre nouveau projet</CardDescription>
-        </CardHeader>
+        <Card className="card-premium border-glow">
+          <CardHeader>
+            <CardTitle className="font-serif text-2xl">Informations du projet</CardTitle>
+            <CardDescription>Renseignez les détails de votre nouveau projet</CardDescription>
+          </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
@@ -240,6 +221,13 @@ export default function NewProjectPage() {
               />
             </div>
 
+            {errors.submit && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{errors.submit}</AlertDescription>
+              </Alert>
+            )}
+
             <div className="flex justify-end gap-3">
               <Link href="/dashboard/projects">
                 <Button type="button" variant="outline">
@@ -251,8 +239,9 @@ export default function NewProjectPage() {
               </Button>
             </div>
           </form>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
